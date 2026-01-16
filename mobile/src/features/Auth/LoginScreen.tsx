@@ -49,8 +49,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.content}>
-        <Text style={styles.title}>Type A</Text>
-        <Text style={styles.subtitle}>Plan Your Perfect Trip</Text>
+        <Text style={styles.title}>Plan_A</Text>
+        <Text style={styles.subtitle}>Perfect Trip</Text>
 
         <TextInput
           style={styles.input}

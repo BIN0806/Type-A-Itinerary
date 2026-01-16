@@ -159,7 +159,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
 
         {/* Start Location Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>📍 Starting Point</Text>
+          <Text style={styles.sectionTitle}>Starting Point</Text>
           <Text style={styles.sectionSubtitle}>
             Tap on the map to drop a pin where you'll start
           </Text>
@@ -207,7 +207,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
             {startLocation && (
               <View style={styles.coordinatesDisplay}>
                 <Text style={styles.coordinatesText}>
-                  📍 {startLocation.lat.toFixed(4)}, {startLocation.lng.toFixed(4)}
+                  {startLocation.lat.toFixed(4)}, {startLocation.lng.toFixed(4)}
                 </Text>
               </View>
             )}
@@ -216,7 +216,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
 
         {/* End Location Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🏁 End Point (Optional)</Text>
+          <Text style={styles.sectionTitle}>End Point (Optional)</Text>
           <Text style={styles.sectionSubtitle}>
             Choose where you want to finish your tour
           </Text>
@@ -232,7 +232,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
 
         {/* Time Window Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>⏰ Time Window</Text>
+          <Text style={styles.sectionTitle}>Time Window</Text>
           
           <View style={styles.timeRow}>
             <View style={styles.timeInput}>
@@ -259,7 +259,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
 
         {/* Walking Speed Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>🚶 Walking Speed</Text>
+          <Text style={styles.sectionTitle}>Walking Speed</Text>
           
           <View style={styles.speedButtons}>
             {(['slow', 'moderate', 'fast'] as const).map((speed) => (
@@ -295,7 +295,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
           disabled={!startLocation || isOptimizing}
         >
           <Text style={styles.optimizeButtonText}>
-            {isOptimizing ? 'Optimizing Route...' : '🚀 Optimize Route'}
+            {isOptimizing ? 'Optimizing Route...' : 'Optimize Route'}
           </Text>
         </TouchableOpacity>
 
@@ -338,7 +338,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                   setShowEndPicker(false);
                 }}
               >
-                <Text style={styles.waypointName}>🔄 No preference</Text>
+                <Text style={styles.waypointName}>No preference</Text>
                 <Text style={styles.waypointDescription}>
                   Let the algorithm find the optimal end point
                 </Text>

@@ -2,14 +2,19 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_BASE_URL = __DEV__ 
-  ? 'http://10.43.218.160:8000/v1' 
-  : 'https://api.v2v.app/v1';
+  ? 'http://10.0.0.175:8000/v1'  // Host machine IP (not localhost - simulator can't reach localhost)
+  : 'https://api.plana.app/v1';
 
 class ApiService {
   private client: AxiosInstance;
   private token: string | null = null;
 
   constructor() {
+    // Log configuration for debugging
+    console.log('🌐 API Service initialized');
+    console.log('📡 Base URL:', API_BASE_URL);
+    console.log('🔧 __DEV__:', __DEV__);
+    
     this.client = axios.create({
       baseURL: API_BASE_URL,
       headers: {
@@ -57,8 +62,23 @@ class ApiService {
 
   // Auth APIs
   async register(email: string, password: string) {
-    const response = await this.client.post('/auth/register', { email, password });
-    return response.data;
+    console.log('🔐 Attempting registration...');
+    console.log('📧 Email:', email);
+    console.log('🌐 URL:', this.client.defaults.baseURL + '/auth/register');
+    
+    try {
+      const response = await this.client.post('/auth/register', { email, password });
+      console.log('✅ Registration successful:', response.status);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Registration failed');
+      console.error('Error type:', error.constructor.name);
+      console.error('Error message:', error.message);
+      console.error('Error code:', error.code);
+      console.error('Response status:', error.response?.status);
+      console.error('Response data:', error.response?.data);
+      throw error;
+    }
   }
 
   async login(email: string, password: string) {
@@ -75,6 +95,7 @@ class ApiService {
 
   // Trip APIs
   async uploadImages(images: File[] | FormData) {
+    console.log('📤 API: uploadImages called');
     const formData = images instanceof FormData ? images : new FormData();
     
     if (!(images instanceof FormData)) {
@@ -83,12 +104,24 @@ class ApiService {
       });
     }
 
-    const response = await this.client.post('/trip/upload', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
-    return response.data;
+    try {
+      console.log('🌐 Posting to /trip/upload...');
+      // 45 second timeout - optimized backend processes images in parallel
+      // Any longer and the app feels unresponsive
+      const response = await this.client.post('/trip/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 45000, // 45 seconds max
+      });
+      console.log('✅ Upload response:', response.status, response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Upload API error');
+      console.error('Status:', error.response?.status);
+      console.error('Data:', error.response?.data);
+      throw error;
+    }
   }
 
   async getJobStatus(jobId: string) {

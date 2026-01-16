@@ -19,21 +19,21 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
-    logger.info("Starting Type A Backend...")
+    logger.info("Starting Plan_A Backend...")
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created/verified")
     
     yield
     
     # Shutdown
-    logger.info("Shutting down Type A Backend...")
+    logger.info("Shutting down Plan_A Backend...")
 
 
 # Create FastAPI app
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version="1.0.0",
-    description="Visual-to-Voyage: Convert travel inspiration into optimized itineraries",
+    description="Plan_A: Convert travel inspiration into optimized itineraries",
     lifespan=lifespan,
     docs_url="/docs" if settings.is_development else None,
     redoc_url="/redoc" if settings.is_development else None
@@ -58,7 +58,7 @@ async def root():
     """Root endpoint - health check."""
     return {
         "status": "ok",
-        "message": "Type A API is running",
+        "message": "Plan_A API is running",
         "version": "1.0.0",
         "environment": settings.ENVIRONMENT
     }

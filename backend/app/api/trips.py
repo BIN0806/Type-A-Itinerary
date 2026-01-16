@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from typing import List
 from uuid import UUID
 import logging
+import asyncio
+import time
 
 from ..core.database import get_db
 from ..core.auth import get_current_user
@@ -22,9 +24,21 @@ from ..services.entity_resolver import entity_resolver
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Total processing timeout (seconds) - must stay under 45s client timeout
+PROCESSING_TIMEOUT = 40.0
+
 
 async def process_images_background(job_id: UUID, image_bytes_list: List[bytes], db: Session):
-    """Background task to process uploaded images."""
+    """
+    Background task to process uploaded images with optimized parallel processing.
+    
+    Optimization strategy:
+    - Parallel image analysis (OCR + Vision run concurrently per image)
+    - Parallel geocoding with alternatives
+    - Strict timeout to stay under 45s total
+    """
+    start_time = time.time()
+    
     try:
         job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
         if not job:
@@ -35,38 +49,86 @@ async def process_images_background(job_id: UUID, image_bytes_list: List[bytes],
         job.processed_images = 0
         db.commit()
         
-        # Analyze images
+        logger.info(f"Starting optimized processing of {len(image_bytes_list)} images")
+        
+        # === PHASE 1: Parallel Image Analysis (60% of progress) ===
+        # All images processed concurrently with rate limiting
+        try:
+            raw_candidates = await asyncio.wait_for(
+                vision_service.analyze_images_batch_async(
+                    image_bytes_list,
+                    max_concurrent=3  # Limit to avoid rate limits
+                ),
+                timeout=25.0  # 25s budget for image analysis
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Image analysis phase timed out, proceeding with partial results")
+            raw_candidates = []
+        
+        job.processed_images = len(image_bytes_list)
+        job.progress = 0.6
+        db.commit()
+        
+        elapsed = time.time() - start_time
+        logger.info(f"Phase 1 complete: {len(raw_candidates)} raw candidates in {elapsed:.1f}s")
+        
+        # === PHASE 2: Entity Resolution (10% of progress) ===
+        logger.info(f"Resolving {len(raw_candidates)} raw candidates...")
+        resolved_candidates = entity_resolver.resolve_duplicates(raw_candidates)
+        
+        # Filter by confidence threshold
+        filtered_candidates = entity_resolver.filter_by_confidence(
+            resolved_candidates,
+            min_confidence=0.50
+        )
+        
+        logger.info(f"After resolution: {len(filtered_candidates)} candidates")
+        job.progress = 0.7
+        db.commit()
+        
+        # === PHASE 3: Parallel Geocoding with Alternatives (30% of progress) ===
+        remaining_time = PROCESSING_TIMEOUT - (time.time() - start_time)
+        if remaining_time < 5:
+            logger.warning("Low time budget for geocoding, limiting candidates")
+            filtered_candidates = filtered_candidates[:3]  # Limit to top 3
+        
         all_candidates = []
-        for i, image_bytes in enumerate(image_bytes_list):
+        
+        if filtered_candidates:
             try:
-                # Vision analysis
-                candidates = vision_service.analyze_image(image_bytes)
+                geocode_results = await asyncio.wait_for(
+                    geocoding_service.geocode_batch_async(
+                        filtered_candidates,
+                        with_alternatives=True
+                    ),
+                    timeout=min(remaining_time - 2, 12.0)  # Leave 2s buffer
+                )
                 
-                # Geocode each candidate
-                for candidate in candidates:
-                    enriched = geocoding_service.geocode_location(candidate)
-                    if enriched:
+                for result in geocode_results:
+                    primary = result.get("primary")
+                    if primary:
                         all_candidates.append({
-                            "name": enriched.name,
-                            "description": enriched.description,
-                            "confidence": enriched.confidence,
-                            "google_place_id": enriched.google_place_id,
-                            "lat": enriched.lat,
-                            "lng": enriched.lng,
-                            "address": enriched.address,
-                            "opening_hours": enriched.opening_hours
+                            "name": primary["name"],
+                            "description": primary.get("description"),
+                            "confidence": primary.get("confidence", 0.8),
+                            "google_place_id": primary["google_place_id"],
+                            "lat": primary["lat"],
+                            "lng": primary["lng"],
+                            "address": primary.get("address"),
+                            "rating": primary.get("rating"),
+                            "opening_hours": primary.get("opening_hours"),
+                            # Include alternatives for disambiguation
+                            "alternatives": result.get("alternatives", []),
+                            "original_query": result.get("original_query")
                         })
                 
-                # Update progress
-                job.processed_images = i + 1
-                job.progress = (i + 1) / len(image_bytes_list)
-                db.commit()
-                
-            except Exception as e:
-                logger.error(f"Error processing image {i}: {e}")
-                continue
+            except asyncio.TimeoutError:
+                logger.warning("Geocoding phase timed out, proceeding with partial results")
         
         # Mark as completed
+        total_time = time.time() - start_time
+        logger.info(f"Processing complete: {len(all_candidates)} candidates in {total_time:.1f}s")
+        
         job.status = "completed"
         job.progress = 1.0
         job.candidates = all_candidates

@@ -1,24 +1,24 @@
 services:
   postgres:
     image: postgis/postgis:15-3.3
-    container_name: v2v_postgres
+    container_name: plana_postgres
     environment:
-      POSTGRES_USER: v2v_user
-      POSTGRES_PASSWORD: v2v_password
-      POSTGRES_DB: v2v
+      POSTGRES_USER: plana_user
+      POSTGRES_PASSWORD: plana_password
+      POSTGRES_DB: plana
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U v2v_user -d v2v" ]
+      test: [ "CMD-SHELL", "pg_isready -U plana_user -d plana" ]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: v2v_redis
+    container_name: plana_redis
     ports:
       - "6379:6379"
     volumes:
@@ -33,7 +33,7 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
-    container_name: v2v_backend
+    container_name: plana_backend
     ports:
       - "8000:8000"
     env_file:

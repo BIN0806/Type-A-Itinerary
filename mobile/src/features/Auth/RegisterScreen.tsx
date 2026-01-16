@@ -25,34 +25,45 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
   const [isLoading, setIsLoading] = useState(false);
 
   const handleRegister = async () => {
+    console.log('👤 Register button pressed');
+    
     if (!email || !password || !confirmPassword) {
+      console.log('⚠️  Validation failed: empty fields');
       Alert.alert('Error', 'Please fill all fields');
       return;
     }
 
     if (password.length < 8) {
+      console.log('⚠️  Validation failed: password too short');
       Alert.alert('Error', 'Password must be at least 8 characters');
       return;
     }
 
     if (password !== confirmPassword) {
+      console.log('⚠️  Validation failed: passwords do not match');
       Alert.alert('Error', 'Passwords do not match');
       return;
     }
 
+    console.log('✅ Validation passed, calling API...');
     setIsLoading(true);
     try {
-      await apiService.register(email, password);
+      const result = await apiService.register(email, password);
+      console.log('🎉 Registration complete:', result);
       Alert.alert('Success', 'Account created! Please login.', [
         { text: 'OK', onPress: () => navigation.navigate('Login') }
       ]);
     } catch (error: any) {
+      console.log('💥 Registration error caught in component');
+      const errorMessage = error.response?.data?.detail || error.message || 'Could not create account';
+      console.log('Error message shown to user:', errorMessage);
       Alert.alert(
         'Registration Failed',
-        error.response?.data?.detail || 'Could not create account'
+        errorMessage
       );
     } finally {
       setIsLoading(false);
+      console.log('🏁 Registration flow complete');
     }
   };
 

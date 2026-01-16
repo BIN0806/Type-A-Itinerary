@@ -13,9 +13,42 @@ class EntityExtractor:
     
     # Common non-location keywords to filter out
     NON_LOCATION_KEYWORDS = {
+        # Social media terms
         'like', 'love', 'follow', 'subscribe', 'comment', 'share', 'click',
         'link', 'bio', 'dm', 'tag', 'check', 'out', 'new', 'video', 'photo',
-        'today', 'yesterday', 'tomorrow', 'weekend', 'day', 'night', 'morning'
+        'today', 'yesterday', 'tomorrow', 'weekend', 'day', 'night', 'morning',
+        'repost', 'story', 'reel', 'post', 'feed', 'trending', 'viral',
+        # Time words
+        'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+        'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
+        'september', 'october', 'november', 'december', 'week', 'month', 'year',
+        # Common adjectives/words
+        'best', 'favorite', 'amazing', 'delicious', 'beautiful', 'perfect', 'great',
+        'home', 'rare', 'fresh', 'hot', 'cold', 'sweet', 'spicy', 'yummy', 'tasty',
+        # Food items (not locations)
+        'coffee', 'latte', 'bagel', 'pizza', 'burger', 'sandwich', 'cake', 'cookie',
+        'mojito', 'drink', 'cocktail', 'wine', 'beer', 'dessert', 'ice', 'cream',
+        'raspberry', 'rasberry', 'chocolate', 'vanilla', 'caramel', 'mint', 'fruit',
+        # Common fragments that aren't locations
+        'the', 'and', 'for', 'with', 'from', 'this', 'that', 'here', 'there', 'where',
+        'what', 'when', 'how', 'why', 'who', 'which', 'more', 'most', 'some', 'many',
+        'far', 'near', 'close', 'spent', 'views', 'rooftop', 'basically',
+    }
+    
+    # Minimum length for proper noun extraction
+    MIN_LOCATION_LENGTH = 4
+    
+    # Words that indicate a location when present
+    LOCATION_INDICATOR_WORDS = {
+        'cafe', 'café', 'restaurant', 'bar', 'pub', 'grill', 'kitchen', 'diner',
+        'bakery', 'pizzeria', 'bistro', 'eatery', 'tavern', 'lounge',
+        'tower', 'museum', 'park', 'square', 'plaza', 'garden', 'market',
+        'street', 'avenue', 'road', 'boulevard', 'lane', 'drive', 'way',
+        'bridge', 'station', 'terminal', 'airport', 'hotel', 'inn', 'resort',
+        'beach', 'harbor', 'port', 'pier', 'island', 'mountain', 'hill', 'valley',
+        'building', 'center', 'centre', 'mall', 'shop', 'store', 'theater', 'theatre',
+        'library', 'church', 'temple', 'mosque', 'cathedral', 'palace', 'castle',
+        'dumpling', 'noodle', 'taco', 'sushi', 'ramen', 'espresso', 'rooftop',
     }
     
     def extract_from_ocr_result(
@@ -125,40 +158,75 @@ class EntityExtractor:
     
     def _extract_proper_nouns(self, text: str) -> List[str]:
         """Extract capitalized words that might be locations."""
-        # Pattern: Words starting with capital letter
-        pattern = r'\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)*)\b'
-        matches = re.findall(pattern, text)
+        # Pattern: Words starting with capital letter (minimum 2 words or location indicator)
+        pattern = r'\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)+)\b'
+        multi_word_matches = re.findall(pattern, text)
+        
+        # Also look for single words that contain location indicators
+        single_pattern = r'\b([A-Z][a-z]{3,})\b'
+        single_matches = re.findall(single_pattern, text)
         
         # Filter and clean
         filtered = []
-        for match in matches:
-            if self._is_likely_location(match):
+        
+        # Multi-word proper nouns are more likely to be locations
+        for match in multi_word_matches:
+            if self._is_likely_location(match, is_multi_word=True):
                 filtered.append(match)
+        
+        # Single words only if they contain location indicators
+        for match in single_matches:
+            if self._is_likely_location(match, is_multi_word=False):
+                # Only add if not already in filtered (from multi-word)
+                if match not in filtered and not any(match in m for m in filtered):
+                    filtered.append(match)
         
         return filtered
     
-    def _is_likely_location(self, text: str) -> bool:
+    def _is_likely_location(self, text: str, is_multi_word: bool = False) -> bool:
         """Heuristic check if text is likely a location name."""
-        text_lower = text.lower()
+        text_lower = text.lower().strip()
+        words = text_lower.split()
         
-        # Filter out common non-location words
-        if text_lower in self.NON_LOCATION_KEYWORDS:
+        # Must be at least MIN_LOCATION_LENGTH characters
+        if len(text) < self.MIN_LOCATION_LENGTH:
+            logger.debug(f"Rejected '{text}': too short")
             return False
+        
+        # Filter out common non-location words (check each word)
+        for word in words:
+            if word in self.NON_LOCATION_KEYWORDS:
+                logger.debug(f"Rejected '{text}': contains non-location word '{word}'")
+                return False
         
         # Filter out if it starts with common verbs/adjectives
-        if text_lower.split()[0] in {'my', 'this', 'that', 'the', 'a', 'an'}:
+        if words[0] in {'my', 'this', 'that', 'the', 'a', 'an', 'i', 'we', 'you', 'they'}:
+            logger.debug(f"Rejected '{text}': starts with common word")
             return False
         
-        # Must be at least 3 characters
-        if len(text) < 3:
-            return False
+        # Check for location indicator words (high confidence)
+        has_location_indicator = any(
+            indicator in text_lower 
+            for indicator in self.LOCATION_INDICATOR_WORDS
+        )
         
-        # Location keywords boost confidence
-        location_keywords = ['cafe', 'restaurant', 'tower', 'museum', 'park', 'street', 'square', 'plaza']
-        if any(keyword in text_lower for keyword in location_keywords):
+        if has_location_indicator:
+            logger.debug(f"Accepted '{text}': has location indicator")
             return True
         
-        return True
+        # For multi-word phrases, accept if no blocking keywords
+        if is_multi_word and len(words) >= 2:
+            # Accept multi-word proper nouns (e.g., "Jin Mei Dumpling", "Liberty Bagels")
+            logger.debug(f"Accepted '{text}': multi-word proper noun")
+            return True
+        
+        # Single words without location indicators are rejected
+        # This prevents "Ihe", "Wer", "Rare" etc. from being extracted
+        if not is_multi_word:
+            logger.debug(f"Rejected '{text}': single word without location indicator")
+            return False
+        
+        return False
     
     def _is_already_extracted(self, name: str, candidates: List[CandidateLocation]) -> bool:
         """Check if location name is already in candidates list."""

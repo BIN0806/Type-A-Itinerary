@@ -57,6 +57,8 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ navigation }) => {
       return;
     }
 
+    console.log('📤 Starting image upload...');
+    console.log(`📊 Image count: ${selectedImages.length}`);
     setIsUploading(true);
 
     try {
@@ -68,6 +70,7 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ navigation }) => {
         const match = /\.(\w+)$/.exec(filename);
         const type = match ? `image/${match[1]}` : 'image/jpeg';
 
+        console.log(`📷 Adding image ${index + 1}:`, filename);
         formData.append('files', {
           uri,
           name: filename,
@@ -78,9 +81,11 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ navigation }) => {
       });
 
       // Upload to backend
+      console.log('🚀 Uploading to backend...');
       const response = await apiService.uploadImages(formData);
       const { job_id } = response;
 
+      console.log('✅ Upload successful! Job ID:', job_id);
       Alert.alert(
         'Upload Successful',
         'Your images are being analyzed. This may take a moment.',
@@ -92,13 +97,35 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ navigation }) => {
         ]
       );
     } catch (error: any) {
-      Alert.alert(
-        'Upload Failed',
-        error.response?.data?.detail || 'Could not upload images'
-      );
+      console.error('❌ Upload failed');
+      console.error('Error details:', {
+        message: error.message,
+        status: error.response?.status,
+        data: error.response?.data,
+      });
+
+      // Better error messages based on error type
+      let errorMessage = 'Could not upload images';
+      
+      if (error.response?.status === 429 || 
+          error.response?.data?.detail?.includes('quota') ||
+          error.response?.data?.detail?.includes('OpenAI')) {
+        errorMessage = 'API quota exceeded. Please check your OpenAI API credits at platform.openai.com/account/billing';
+      } else if (error.response?.status === 401) {
+        errorMessage = 'Authentication error. Please try logging in again.';
+      } else if (error.response?.status === 500) {
+        errorMessage = 'Server error. Please try again later or check backend logs.';
+      } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
+        errorMessage = 'Cannot connect to server. Make sure Docker is running.';
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      }
+
+      Alert.alert('Upload Failed', errorMessage);
     } finally {
       setIsUploading(false);
       setUploadProgress({});
+      console.log('🏁 Upload flow complete');
     }
   };
 

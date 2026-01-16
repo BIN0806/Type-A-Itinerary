@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # Application
     ENVIRONMENT: str = "development"
     API_V1_PREFIX: str = "/v1"
-    PROJECT_NAME: str = "Type A"
+    PROJECT_NAME: str = "Plan_A"
     
     # Rate Limiting
     RATE_LIMIT_UPLOADS_PER_HOUR: int = 10
@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     # Google Maps
     MAX_WAYPOINTS_IN_URL: int = 9
     DISTANCE_MATRIX_CACHE_TTL: int = 60 * 60 * 24 * 30  # 30 days
+    
+    # Feature Flags
+    USE_MOCK_VISION: bool = False  # Set to True to use mock vision service (no API calls)
+    USE_ENHANCED_PIPELINE: bool = True  # Use OCR + Vision API pipeline
     
     @property
     def is_development(self) -> bool:

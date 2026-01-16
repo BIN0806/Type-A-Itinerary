@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Type A",
-    "slug": "typea-mobile",
+    "name": "Plan_A",
+    "slug": "plana-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -16,10 +16,10 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.typea.mobile",
+      "bundleIdentifier": "com.plana.mobile",
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Type A needs access to your photo library to upload travel inspiration images.",
-        "NSCameraUsageDescription": "Type A needs access to your camera to take photos of travel locations."
+        "NSPhotoLibraryUsageDescription": "Plan_A needs access to your photo library to upload travel inspiration images.",
+        "NSCameraUsageDescription": "Plan_A needs access to your camera to take photos of travel locations."
       }
     },
     "android": {
@@ -27,7 +27,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#4F46E5"
       },
-      "package": "com.typea.mobile",
+      "package": "com.plana.mobile",
       "permissions": [
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
@@ -41,7 +41,7 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Type A needs access to your photos to upload travel inspiration."
+          "photosPermission": "Plan_A needs access to your photos to upload travel inspiration."
         }
       ]
     ]
