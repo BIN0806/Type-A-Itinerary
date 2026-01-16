@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     # Application
     ENVIRONMENT: str = "development"
     API_V1_PREFIX: str = "/v1"
-    PROJECT_NAME: str = "V2V - Visual to Voyage"
+    PROJECT_NAME: str = "Type A"
     
     # Rate Limiting
     RATE_LIMIT_UPLOADS_PER_HOUR: int = 10

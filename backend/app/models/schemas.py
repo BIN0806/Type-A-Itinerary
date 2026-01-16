@@ -49,10 +49,11 @@ class CandidateLocation(BaseModel):
 
 # Trip Constraints
 class TripConstraints(BaseModel):
-    start_location: LatLng
+    start_location: LatLng  # User drops a pin on map
     start_time: datetime
     end_time: datetime
     walking_speed: Literal["slow", "moderate", "fast"] = "moderate"
+    end_waypoint_id: Optional[UUID] = None  # Optional: which waypoint to end at
     
     @validator("end_time")
     def end_after_start(cls, v, values):

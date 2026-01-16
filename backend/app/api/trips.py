@@ -17,6 +17,7 @@ from ..services.geocoding_service import geocoding_service
 from ..services.distance_matrix_service import distance_matrix_service
 from ..services.route_optimizer import route_optimizer
 from ..services.maps_link_service import maps_link_service
+from ..services.entity_resolver import entity_resolver
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -269,11 +270,12 @@ async def optimize_trip(
         request.constraints.start_location
     )
     
-    # Optimize route
+    # Optimize route (with optional fixed end waypoint)
     optimized_waypoints = route_optimizer.solve_tsp(
         waypoints,
         distance_matrix,
-        request.constraints
+        request.constraints,
+        end_waypoint_id=request.constraints.end_waypoint_id
     )
     
     # Update trip

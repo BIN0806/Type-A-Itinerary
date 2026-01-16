@@ -6,25 +6,83 @@ import json
 
 from ..core.config import settings
 from ..models.schemas import CandidateLocation
+from .ocr_service import ocr_service
+from .entity_extractor import entity_extractor
 
 logger = logging.getLogger(__name__)
 
 
 class VisionService:
-    """Service for analyzing images using OpenAI Vision API."""
+    """Service for analyzing images using OpenAI Vision API combined with OCR."""
     
-    def __init__(self):
+    def __init__(self, use_enhanced_pipeline: bool = True):
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        self.use_enhanced_pipeline = use_enhanced_pipeline
     
     def analyze_image(self, image_bytes: bytes) -> List[CandidateLocation]:
         """
-        Analyze an image and extract location information.
+        Analyze an image and extract location information using multi-modal approach.
         
         Args:
             image_bytes: Raw image bytes
             
         Returns:
             List of candidate locations found in the image
+        """
+        if self.use_enhanced_pipeline:
+            return self._analyze_enhanced(image_bytes)
+        else:
+            return self._analyze_vision_only(image_bytes)
+    
+    def _analyze_enhanced(self, image_bytes: bytes) -> List[CandidateLocation]:
+        """
+        Enhanced analysis using OCR + Vision API.
+        
+        Args:
+            image_bytes: Raw image bytes
+            
+        Returns:
+            Combined candidates from both sources
+        """
+        try:
+            # Step 1: OCR text extraction
+            logger.info("Running OCR extraction...")
+            ocr_result = ocr_service.extract_text(image_bytes)
+            
+            # Step 2: Extract entities from OCR
+            ocr_candidates = []
+            if ocr_result.get("text"):
+                logger.info(f"OCR extracted: {ocr_result['text'][:100]}...")
+                ocr_candidates = entity_extractor.extract_from_ocr_result(ocr_result)
+                logger.info(f"OCR entities: {len(ocr_candidates)} candidates")
+            
+            # Step 3: Vision API for landmark recognition
+            logger.info("Running Vision API analysis...")
+            vision_candidates = self._analyze_vision_only(image_bytes)
+            logger.info(f"Vision API: {len(vision_candidates)} candidates")
+            
+            # Step 4: Combine results with confidence boosting
+            combined = entity_extractor.extract_from_vision_result(
+                vision_candidates,
+                ocr_candidates
+            )
+            
+            logger.info(f"Enhanced analysis complete: {len(combined)} total candidates")
+            return combined
+            
+        except Exception as e:
+            logger.error(f"Enhanced analysis failed, falling back to vision-only: {e}")
+            return self._analyze_vision_only(image_bytes)
+    
+    def _analyze_vision_only(self, image_bytes: bytes) -> List[CandidateLocation]:
+        """
+        Original vision-only analysis (fallback or legacy mode).
+        
+        Args:
+            image_bytes: Raw image bytes
+            
+        Returns:
+            Candidates from Vision API only
         """
         try:
             # Encode image to base64

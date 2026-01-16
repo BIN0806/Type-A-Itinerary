@@ -19,14 +19,14 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Startup
-    logger.info("Starting V2V Backend...")
+    logger.info("Starting Type A Backend...")
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables created/verified")
     
     yield
     
     # Shutdown
-    logger.info("Shutting down V2V Backend...")
+    logger.info("Shutting down Type A Backend...")
 
 
 # Create FastAPI app
@@ -58,7 +58,7 @@ async def root():
     """Root endpoint - health check."""
     return {
         "status": "ok",
-        "message": "V2V API is running",
+        "message": "Type A API is running",
         "version": "1.0.0",
         "environment": settings.ENVIRONMENT
     }

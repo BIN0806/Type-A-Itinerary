@@ -9,6 +9,13 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     libffi-dev \
     postgresql-client \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    tesseract-ocr-fra \
+    tesseract-ocr-spa \
+    tesseract-ocr-deu \
+    tesseract-ocr-jpn \
+    tesseract-ocr-chi-sim \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
