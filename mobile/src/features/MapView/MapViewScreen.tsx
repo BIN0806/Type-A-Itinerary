@@ -53,13 +53,26 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
 
   const loadTrip = async () => {
     try {
-      const [tripResponse, routeResponse] = await Promise.all([
-        apiService.getTrip(tripId),
-        apiService.getTripRoute(tripId).catch(() => null),
-      ]);
+      const tripResponse = await apiService.getTrip(tripId);
       setTrip(tripResponse);
-      if (routeResponse) {
-        setRouteData(routeResponse);
+      
+      // Try to get route data
+      try {
+        console.log('🗺️ Fetching route polylines for trip:', tripId);
+        const routeResponse = await apiService.getTripRoute(tripId);
+        console.log('✅ Route data received:', {
+          segments: routeResponse.segments?.length || 0,
+          totalDuration: routeResponse.total_duration_seconds,
+          totalDistance: routeResponse.total_distance_meters
+        });
+        if (routeResponse && routeResponse.segments && routeResponse.segments.length > 0) {
+          setRouteData(routeResponse);
+        } else {
+          console.warn('⚠️ Route data empty or no segments');
+        }
+      } catch (routeError: any) {
+        console.error('❌ Failed to fetch route:', routeError.message);
+        // Don't show alert - just log, map will show straight lines as fallback
       }
     } catch (error: any) {
       Alert.alert('Error', 'Could not load trip details');

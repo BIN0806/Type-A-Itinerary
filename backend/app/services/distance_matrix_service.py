@@ -251,10 +251,26 @@ class DistanceMatrixService:
                             
                     except Exception as e:
                         logger.error(f"Failed to get distance {i}->{j}: {e}")
-                        # Use fallback: 10 minutes
-                        matrix[i][j] = 600
+                        # Use fallback: estimate based on straight-line distance
+                        from math import radians, cos, sin, asin, sqrt
+                        p1, p2 = points[i], points[j]
+                        lat1, lon1 = radians(p1.lat), radians(p1.lng)
+                        lat2, lon2 = radians(p2.lat), radians(p2.lng)
+                        dlat = lat2 - lat1
+                        dlon = lon2 - lon1
+                        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+                        c = 2 * asin(sqrt(a))
+                        distance_meters = 6371000 * c
+                        # Estimate walking time: 1.4 m/s with 1.3x factor for street network
+                        estimated_seconds = max(30, int((distance_meters * 1.3) / 1.4))
+                        matrix[i][j] = estimated_seconds
+                        logger.warning(f"Using estimated distance {i}->{j}: {estimated_seconds}s for {int(distance_meters)}m")
         
         logger.info(f"Distance matrix calculated: {n}×{n} ({mode} mode)")
+        
+        # Log sample distances for debugging
+        if n > 1:
+            logger.debug(f"Sample distances: start->waypoint[0]={matrix[0][1]}s, waypoint[0]->waypoint[1]={matrix[1][2] if n > 2 else 'N/A'}s")
         
         return {
             "matrix": matrix,
@@ -324,13 +340,19 @@ class DistanceMatrixService:
                     route = directions[0]
                     leg = route.get("legs", [{}])[0]
                     
-                    # Extract polyline points
+                    # Extract polyline points - use route-level polyline first (more accurate)
                     polyline_points = []
-                    for step in leg.get("steps", []):
-                        # Decode the polyline
-                        if "polyline" in step and "points" in step["polyline"]:
-                            decoded = self._decode_polyline(step["polyline"]["points"])
-                            polyline_points.extend(decoded)
+                    if "overview_polyline" in route and "points" in route["overview_polyline"]:
+                        # Use route-level polyline (most accurate)
+                        polyline_points = self._decode_polyline(route["overview_polyline"]["points"])
+                        logger.debug(f"Using route-level polyline with {len(polyline_points)} points")
+                    else:
+                        # Fallback to step-level polylines
+                        for step in leg.get("steps", []):
+                            if "polyline" in step and "points" in step["polyline"]:
+                                decoded = self._decode_polyline(step["polyline"]["points"])
+                                polyline_points.extend(decoded)
+                        logger.debug(f"Using step-level polylines with {len(polyline_points)} points")
                     
                     duration = leg.get("duration", {}).get("value", 0)
                     distance = leg.get("distance", {}).get("value", 0)

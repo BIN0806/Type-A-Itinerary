@@ -122,21 +122,32 @@ class RouteOptimizer:
             stay_seconds = stay_minutes * 60
             time_dimension.SlackVar(index).SetRange(stay_seconds, stay_seconds)
         
-        # Set search parameters
+        # Set search parameters for better optimization
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+        # Use PATH_CHEAPEST_ARC for faster initial solution (AUTOMATIC can be slow)
         search_parameters.first_solution_strategy = (
             routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
         )
+        # Use guided local search for improvement
         search_parameters.local_search_metaheuristic = (
             routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
         )
-        search_parameters.time_limit.seconds = 5
+        # Reduce time limit to prevent hanging (10 seconds should be enough for 5 waypoints)
+        search_parameters.time_limit.seconds = 10
+        # Limit solutions to prevent excessive computation
+        search_parameters.solution_limit = 10
         
         # Solve
-        logger.info(f"Solving TSP for {len(waypoints)} waypoints...")
+        logger.info(f"Solving TSP for {len(waypoints)} waypoints with {len(distance_matrix)}×{len(distance_matrix)} matrix...")
+        logger.info(f"TSP solver timeout: {search_parameters.time_limit.seconds}s")
         try:
             solution = routing.SolveWithParameters(search_parameters)
-            logger.info(f"TSP solver finished, solution found: {solution is not None}")
+            if solution:
+                # Log solution quality
+                objective_value = solution.ObjectiveValue()
+                logger.info(f"TSP solver finished: solution found with objective value {objective_value}")
+            else:
+                logger.warning("TSP solver returned no solution")
         except Exception as e:
             logger.error(f"TSP solver error: {e}")
             return self._greedy_fallback(waypoints, distance_matrix, constraints, end_waypoint_id)

@@ -32,6 +32,7 @@ yarn-error.log*
 *.swp
 *.swo
 *~
+.cursor/
 
 # OS
 .DS_Store
@@ -53,9 +54,4 @@ htmlcov/
 docker-compose.override.yml
 
 
-IMPLEMENTATION_SUMMARY.md
-QUICKSTART.md
-TYPEA_PROJECT_SPECS.md
-README.md
-ENHANCED_PLAN.md
-NEXT_STEPS.md
+./docs

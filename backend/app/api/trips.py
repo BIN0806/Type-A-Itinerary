@@ -368,6 +368,8 @@ async def optimize_trip(
     
     travel_mode = request.constraints.travel_mode
     logger.info(f"Optimizing trip {trip.id} with {len(waypoints)} waypoints using {travel_mode} mode")
+    logger.info(f"Start location: lat={request.constraints.start_location.lat}, lng={request.constraints.start_location.lng}")
+    logger.info(f"Waypoints: {[f'{wp.name} ({wp.lat:.4f},{wp.lng:.4f})' for wp in waypoints]}")
     
     try:
         # Get distance matrix with transit details
@@ -379,6 +381,13 @@ async def optimize_trip(
         
         distance_matrix = matrix_result["matrix"]
         transit_details = matrix_result.get("transit_details", {})
+        
+        # Log distance matrix summary for debugging
+        if distance_matrix:
+            logger.info(f"Distance matrix: {len(distance_matrix)}×{len(distance_matrix[0])}")
+            # Log distances from start to each waypoint
+            for i, wp in enumerate(waypoints):
+                logger.info(f"  Start → {wp.name}: {distance_matrix[0][i+1]}s")
         
         # Optimize route (with optional fixed end waypoint)
         optimized_waypoints = route_optimizer.solve_tsp(
@@ -560,21 +569,32 @@ async def get_trip_route(
     ).order_by(Waypoint.order).all()
     
     if len(waypoints) < 2:
+        logger.warning(f"Trip {trip_id} has less than 2 waypoints, cannot generate route")
         return {
             "segments": [],
             "total_duration_seconds": 0,
             "total_distance_meters": 0
         }
     
+    logger.info(f"Generating walking route for trip {trip_id} with {len(waypoints)} waypoints")
+    
     # Convert waypoints to LatLng
     waypoint_coords = [LatLng(lat=wp.lat, lng=wp.lng) for wp in waypoints]
     
     # Get walking route with polylines
-    route_data = distance_matrix_service.get_walking_route_polyline(waypoint_coords)
-    
-    # Add waypoint names to segments
-    for seg in route_data["segments"]:
-        seg["from_name"] = waypoints[seg["from_index"]].name
-        seg["to_name"] = waypoints[seg["to_index"]].name
-    
-    return route_data
+    try:
+        route_data = distance_matrix_service.get_walking_route_polyline(waypoint_coords)
+        logger.info(f"Route generated: {len(route_data['segments'])} segments, {route_data['total_duration_seconds']}s total")
+        
+        # Add waypoint names to segments
+        for seg in route_data["segments"]:
+            seg["from_name"] = waypoints[seg["from_index"]].name
+            seg["to_name"] = waypoints[seg["to_index"]].name
+        
+        return route_data
+    except Exception as e:
+        logger.error(f"Failed to generate route for trip {trip_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate route: {str(e)}"
+        )

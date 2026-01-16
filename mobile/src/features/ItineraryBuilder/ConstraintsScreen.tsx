@@ -113,6 +113,42 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
   // Time settings
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('18:00');
+  
+  // Ensure endTime is always after startTime
+  const handleStartTimeChange = (newTime: string) => {
+    setStartTime(newTime);
+    // If endTime would be before or equal to new startTime, adjust it
+    const [startH, startM] = newTime.split(':').map(Number);
+    const [endH, endM] = endTime.split(':').map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    
+    if (endMinutes <= startMinutes) {
+      // Set endTime to 1 hour after startTime
+      const newEndMinutes = startMinutes + 60;
+      const newEndH = Math.floor(newEndMinutes / 60) % 24;
+      const newEndM = newEndMinutes % 60;
+      setEndTime(`${String(newEndH).padStart(2, '0')}:${String(newEndM).padStart(2, '0')}`);
+    }
+  };
+  
+  const handleEndTimeChange = (newTime: string) => {
+    const [startH, startM] = startTime.split(':').map(Number);
+    const [endH, endM] = newTime.split(':').map(Number);
+    const startMinutes = startH * 60 + startM;
+    const endMinutes = endH * 60 + endM;
+    
+    if (endMinutes <= startMinutes) {
+      Alert.alert(
+        'Invalid Time',
+        'End time must be after start time. Please choose a later time.',
+        [{ text: 'OK' }]
+      );
+      return; // Don't update if invalid
+    }
+    
+    setEndTime(newTime);
+  };
   const [walkingSpeed, setWalkingSpeed] = useState<'slow' | 'moderate' | 'fast'>('moderate');
   const [travelMode, setTravelMode] = useState<'walking' | 'transit'>('walking'); // New: transit option
   const [isOptimizing, setIsOptimizing] = useState(false);
@@ -191,6 +227,13 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
       return;
     }
 
+    // Validate time format
+    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(startTime) || !timeRegex.test(endTime)) {
+      Alert.alert('Invalid Time', 'Please enter times in HH:MM format (e.g., 09:00)');
+      return;
+    }
+
     setIsOptimizing(true);
 
     try {
@@ -203,6 +246,17 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
       const endDateTime = new Date(today);
       const [endHour, endMinute] = endTime.split(':').map(Number);
       endDateTime.setHours(endHour, endMinute, 0, 0);
+
+      // Validate that end time is after start time
+      if (endDateTime <= startDateTime) {
+        Alert.alert(
+          'Invalid Time Range',
+          'End time must be after start time. Please adjust your time settings.',
+          [{ text: 'OK' }]
+        );
+        setIsOptimizing(false);
+        return;
+      }
 
       const constraints: any = {
         start_location: startLocation,
@@ -239,16 +293,31 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
       console.error('❌ Optimization failed:', error);
       console.error('Error details:', error.response?.data);
       
-      const errorMessage = error.response?.data?.detail 
-        || error.message 
-        || 'Could not optimize route. Please try again.';
+      let errorMessage = error.response?.data?.detail || error.message || 'Could not optimize route. Please try again.';
+      
+      // Handle validation errors more gracefully
+      if (error.response?.status === 422) {
+        const validationErrors = error.response?.data?.detail;
+        if (Array.isArray(validationErrors)) {
+          const timeError = validationErrors.find((e: any) => 
+            e.msg?.includes('end_time must be after start_time') || 
+            e.msg?.includes('start_time')
+          );
+          if (timeError) {
+            errorMessage = 'End time must be after start time. Please adjust your time settings in the form above.';
+          } else {
+            errorMessage = validationErrors.map((e: any) => e.msg || 'Validation error').join('\n');
+          }
+        } else if (typeof validationErrors === 'string') {
+          errorMessage = validationErrors;
+        }
+      }
       
       Alert.alert(
         'Optimization Failed',
         errorMessage,
         [
-          { text: 'Try Again', onPress: handleOptimize },
-          { text: 'Cancel', style: 'cancel' }
+          { text: 'OK', style: 'cancel' }
         ]
       );
     } finally {
@@ -368,7 +437,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                 style={styles.input}
                 placeholder="18:00"
                 value={endTime}
-                onChangeText={setEndTime}
+                onChangeText={handleEndTimeChange}
               />
             </View>
           </View>
