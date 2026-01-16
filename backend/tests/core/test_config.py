@@ -33,8 +33,8 @@ class TestSettings:
     
     def test_use_mock_vision_defaults_to_false(self):
         """Mock vision should be disabled by default."""
-        settings = Settings()
-        assert settings.USE_MOCK_VISION is False
+        # Don't depend on environment/.env during tests; assert the configured default.
+        assert Settings.model_fields["USE_MOCK_VISION"].default is False
     
     def test_use_enhanced_pipeline_defaults_to_true(self):
         """Enhanced pipeline should be enabled by default."""

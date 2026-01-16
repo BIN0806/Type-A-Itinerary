@@ -8,6 +8,7 @@ import time
 
 from ..core.database import get_db
 from ..core.auth import get_current_user
+from ..core.config import settings
 from ..db.models import User, Trip, Waypoint, AnalysisJob, TripStatus
 from ..models.schemas import (
     TripCreate, TripResponse, WaypointResponse, WaypointConfirmation,
@@ -80,7 +81,9 @@ async def process_images_background(job_id: UUID, image_bytes_list: List[bytes],
         
         # === PHASE 2: Entity Resolution (10% of progress) ===
         logger.info(f"Resolving {len(raw_candidates)} raw candidates...")
-        resolved_candidates = entity_resolver.resolve_duplicates(raw_candidates)
+        resolution_result = entity_resolver.resolve_duplicates(raw_candidates, track_duplicates=True)
+        resolved_candidates = resolution_result["candidates"]
+        duplicates_merged = resolution_result.get("duplicates_merged", [])
         
         # Filter by confidence threshold
         filtered_candidates = entity_resolver.filter_by_confidence(
@@ -123,6 +126,7 @@ async def process_images_background(job_id: UUID, image_bytes_list: List[bytes],
                             "address": primary.get("address"),
                             "rating": primary.get("rating"),
                             "opening_hours": primary.get("opening_hours"),
+                            "photo_url": primary.get("photo_url"),  # Include restaurant photo!
                             # Include alternatives for disambiguation
                             "alternatives": result.get("alternatives", []),
                             "original_query": result.get("original_query")
@@ -133,19 +137,21 @@ async def process_images_background(job_id: UUID, image_bytes_list: List[bytes],
         
         # Mark as completed - include failed image feedback
         total_time = time.time() - start_time
-        logger.info(f"Processing complete: {len(all_candidates)} candidates, {len(failed_images)} failed in {total_time:.1f}s")
+        logger.info(f"Processing complete: {len(all_candidates)} candidates, {len(failed_images)} failed, {len(duplicates_merged)} duplicates in {total_time:.1f}s")
         
         job.status = "completed"
         job.progress = 1.0
-        # Store both candidates and processing metadata
+        # Store candidates, failures, and duplicate info
         job.candidates = {
             "locations": all_candidates,
             "failed_images": failed_images,
+            "duplicates_merged": duplicates_merged,  # Track duplicates for user notification
             "stats": {
                 "total_images": len(image_bytes_list),
                 "successful_images": len(image_bytes_list) - len(failed_images),
                 "failed_count": len(failed_images),
                 "locations_found": len(all_candidates),
+                "duplicates_count": len(duplicates_merged),
                 "processing_time_seconds": round(total_time, 1)
             }
         }
@@ -269,15 +275,17 @@ async def get_candidates(
             status=job.status,
             candidates=candidates_data,
             failed_images=[],
+            duplicates_merged=[],
             stats=None
         )
     else:
-        # New format with locations, failed_images, and stats
+        # New format with locations, failed_images, duplicates, and stats
         return AnalysisJobComplete(
             job_id=job.id,
             status=job.status,
             candidates=candidates_data.get("locations", []),
             failed_images=candidates_data.get("failed_images", []),
+            duplicates_merged=candidates_data.get("duplicates_merged", []),
             stats=candidates_data.get("stats")
         )
 
@@ -525,3 +533,48 @@ async def get_trip(
         )
     
     return trip
+
+
+@router.get("/trip/{trip_id}/route")
+async def get_trip_route(
+    trip_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get walking route polylines for map display."""
+    from ..models.schemas import LatLng
+    
+    trip = db.query(Trip).filter(
+        Trip.id == trip_id,
+        Trip.user_id == current_user.id
+    ).first()
+    
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    waypoints = db.query(Waypoint).filter(
+        Waypoint.trip_id == trip_id
+    ).order_by(Waypoint.order).all()
+    
+    if len(waypoints) < 2:
+        return {
+            "segments": [],
+            "total_duration_seconds": 0,
+            "total_distance_meters": 0
+        }
+    
+    # Convert waypoints to LatLng
+    waypoint_coords = [LatLng(lat=wp.lat, lng=wp.lng) for wp in waypoints]
+    
+    # Get walking route with polylines
+    route_data = distance_matrix_service.get_walking_route_polyline(waypoint_coords)
+    
+    # Add waypoint names to segments
+    for seg in route_data["segments"]:
+        seg["from_name"] = waypoints[seg["from_index"]].name
+        seg["to_name"] = waypoints[seg["to_index"]].name
+    
+    return route_data

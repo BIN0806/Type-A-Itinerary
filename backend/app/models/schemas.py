@@ -145,7 +145,13 @@ class ProcessingStats(BaseModel):
     successful_images: int
     failed_count: int
     locations_found: int
+    duplicates_count: int = 0
     processing_time_seconds: float
+
+
+class DuplicateMergeInfo(BaseModel):
+    original: str
+    merged_into: str
 
 
 class AnalysisJobComplete(BaseModel):
@@ -153,6 +159,7 @@ class AnalysisJobComplete(BaseModel):
     status: str
     candidates: List[dict]  # Location candidates with alternatives
     failed_images: List[FailedImageInfo] = []
+    duplicates_merged: List[DuplicateMergeInfo] = []  # Track merged duplicates
     stats: Optional[ProcessingStats] = None
 
 

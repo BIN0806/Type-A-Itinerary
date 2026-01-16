@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
+  TouchableOpacity,
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,13 +19,33 @@ type MapViewScreenProps = {
   route: RouteProp<RootStackParamList, 'MapView'>;
 };
 
+interface RouteSegment {
+  from_index: number;
+  to_index: number;
+  from_name: string;
+  to_name: string;
+  polyline: Array<{ lat: number; lng: number }>;
+  duration_seconds: number;
+  distance_meters: number;
+  duration_text: string;
+  distance_text: string;
+}
+
+interface RouteData {
+  segments: RouteSegment[];
+  total_duration_seconds: number;
+  total_distance_meters: number;
+}
+
 export const MapViewScreen: React.FC<MapViewScreenProps> = ({
   navigation,
   route,
 }) => {
   const { tripId } = route.params;
   const [trip, setTrip] = useState<any>(null);
+  const [routeData, setRouteData] = useState<RouteData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedSegment, setSelectedSegment] = useState<RouteSegment | null>(null);
 
   useEffect(() => {
     loadTrip();
@@ -32,13 +53,33 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
 
   const loadTrip = async () => {
     try {
-      const response = await apiService.getTrip(tripId);
-      setTrip(response);
+      const [tripResponse, routeResponse] = await Promise.all([
+        apiService.getTrip(tripId),
+        apiService.getTripRoute(tripId).catch(() => null),
+      ]);
+      setTrip(tripResponse);
+      if (routeResponse) {
+        setRouteData(routeResponse);
+      }
     } catch (error: any) {
       Alert.alert('Error', 'Could not load trip details');
     } finally {
       setIsLoading(false);
     }
+  };
+  
+  const formatDuration = (seconds: number): string => {
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const remainingMins = minutes % 60;
+    return `${hours}h ${remainingMins}m`;
+  };
+  
+  const formatDistance = (meters: number): string => {
+    if (meters < 1000) return `${Math.round(meters)}m`;
+    return `${(meters / 1000).toFixed(1)}km`;
   };
 
   if (isLoading) {
@@ -78,6 +119,9 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
     longitudeDelta: (maxLng - minLng) * 1.5 || 0.05,
   };
 
+  // Generate route polyline colors for each segment
+  const segmentColors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
+
   return (
     <View style={styles.container}>
       <MapView
@@ -85,6 +129,31 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
         style={styles.map}
         initialRegion={region}
       >
+        {/* Render actual walking paths if available */}
+        {routeData && routeData.segments.map((segment, index) => (
+          <Polyline
+            key={`route-${index}`}
+            coordinates={segment.polyline.map(point => ({
+              latitude: point.lat,
+              longitude: point.lng,
+            }))}
+            strokeColor={segmentColors[index % segmentColors.length]}
+            strokeWidth={4}
+            tappable
+            onPress={() => setSelectedSegment(segment)}
+          />
+        ))}
+        
+        {/* Fallback to straight lines if no route data */}
+        {!routeData && (
+          <Polyline
+            coordinates={coordinates}
+            strokeColor="#4F46E5"
+            strokeWidth={3}
+            lineDashPattern={[5, 5]}
+          />
+        )}
+
         {trip.waypoints.map((waypoint: any, index: number) => (
           <Marker
             key={waypoint.id}
@@ -97,14 +166,33 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
             pinColor={index === 0 ? 'green' : index === trip.waypoints.length - 1 ? 'red' : '#4F46E5'}
           />
         ))}
-
-        <Polyline
-          coordinates={coordinates}
-          strokeColor="#4F46E5"
-          strokeWidth={3}
-          lineDashPattern={[1]}
-        />
       </MapView>
+
+      {/* Route info header */}
+      {routeData && (
+        <View style={styles.routeInfo}>
+          <Text style={styles.routeInfoTitle}>Walking Route</Text>
+          <Text style={styles.routeInfoText}>
+            {formatDuration(routeData.total_duration_seconds)} • {formatDistance(routeData.total_distance_meters)}
+          </Text>
+        </View>
+      )}
+
+      {/* Selected segment info */}
+      {selectedSegment && (
+        <TouchableOpacity 
+          style={styles.segmentInfo}
+          onPress={() => setSelectedSegment(null)}
+        >
+          <Text style={styles.segmentInfoTitle}>
+            {selectedSegment.from_name} → {selectedSegment.to_name}
+          </Text>
+          <Text style={styles.segmentInfoText}>
+            🚶 {selectedSegment.duration_text || formatDuration(selectedSegment.duration_seconds)} • {selectedSegment.distance_text || formatDistance(selectedSegment.distance_meters)}
+          </Text>
+          <Text style={styles.tapToDismiss}>Tap to dismiss</Text>
+        </TouchableOpacity>
+      )}
 
       <View style={styles.legend}>
         <View style={styles.legendItem}>
@@ -119,6 +207,12 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
           <View style={[styles.legendDot, { backgroundColor: 'red' }]} />
           <Text style={styles.legendText}>End</Text>
         </View>
+        {routeData && (
+          <View style={styles.legendItem}>
+            <View style={[styles.legendLine]} />
+            <Text style={styles.legendText}>Walking path</Text>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -173,5 +267,66 @@ const styles = StyleSheet.create({
   legendText: {
     fontSize: 14,
     color: '#111827',
+  },
+  legendLine: {
+    width: 20,
+    height: 4,
+    backgroundColor: '#4F46E5',
+    borderRadius: 2,
+    marginRight: 8,
+  },
+  routeInfo: {
+    position: 'absolute',
+    top: 20,
+    left: 20,
+    right: 20,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  routeInfoTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  routeInfoText: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  segmentInfo: {
+    position: 'absolute',
+    bottom: 140,
+    left: 20,
+    right: 20,
+    backgroundColor: '#4F46E5',
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  segmentInfoTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  segmentInfoText: {
+    fontSize: 14,
+    color: '#E0E7FF',
+    marginTop: 4,
+  },
+  tapToDismiss: {
+    fontSize: 12,
+    color: '#C7D2FE',
+    marginTop: 8,
+    fontStyle: 'italic',
   },
 });

@@ -50,8 +50,18 @@ class DistanceMatrixService:
         try:
             cached = self.redis.get(cache_key)
             if cached:
-                logger.debug(f"Cache hit for distance ({mode}): {origin_str} -> {dest_str}")
-                return json.loads(cached)
+                parsed = json.loads(cached)
+                # Handle legacy integer format (old cache entries)
+                if isinstance(parsed, (int, float)):
+                    logger.debug(f"Cache hit (legacy int format): {origin_str} -> {dest_str}")
+                    # Delete old format, will be re-cached with new format
+                    self.redis.delete(cache_key)
+                elif isinstance(parsed, dict) and "duration_seconds" in parsed:
+                    logger.debug(f"Cache hit for distance ({mode}): {origin_str} -> {dest_str}")
+                    return parsed
+                else:
+                    # Unknown format, delete and re-fetch
+                    self.redis.delete(cache_key)
         except Exception as e:
             logger.warning(f"Redis cache read error: {e}")
         
@@ -66,9 +76,15 @@ class DistanceMatrixService:
             if result["status"] == "OK":
                 element = result["rows"][0]["elements"][0]
                 if element["status"] == "OK":
+                    # Handle both dict format {"value": x} and direct int format
+                    duration = element.get("duration", {})
+                    duration_seconds = duration["value"] if isinstance(duration, dict) else duration
+                    distance = element.get("distance", {})
+                    distance_meters = distance.get("value", 0) if isinstance(distance, dict) else (distance or 0)
+                    
                     distance_info = {
-                        "duration_seconds": element["duration"]["value"],
-                        "distance_meters": element.get("distance", {}).get("value", 0),
+                        "duration_seconds": duration_seconds,
+                        "distance_meters": distance_meters,
                         "mode": mode,
                         "transit_details": None
                     }
@@ -106,12 +122,14 @@ class DistanceMatrixService:
             # Estimate time based on mode
             if mode == "transit":
                 # Assume average transit speed of 30 km/h including wait times
-                estimated_seconds = int((distance_meters * 1.2) / 8.3)  # ~30 km/h
+                # Minimum 60 seconds (can't be instant)
+                estimated_seconds = max(60, int((distance_meters * 1.2) / 8.3))  # ~30 km/h
             else:
                 # Walking: 1.4 m/s with street network factor
-                estimated_seconds = int((distance_meters * 1.3) / 1.4)
+                # Minimum 30 seconds
+                estimated_seconds = max(30, int((distance_meters * 1.3) / 1.4))
             
-            logger.warning(f"Using estimated distance ({mode}): {estimated_seconds}s")
+            logger.warning(f"Using estimated distance ({mode}): {estimated_seconds}s for {int(distance_meters)}m")
             return {
                 "duration_seconds": estimated_seconds,
                 "distance_meters": int(distance_meters),
@@ -269,6 +287,139 @@ class DistanceMatrixService:
             "time_saved_seconds": walking_time - transit_time if transit_is_better else 0,
             "transit_details": transit.get("transit_details") if transit_is_better else None
         }
+    
+    def get_walking_route_polyline(
+        self,
+        waypoints: List[LatLng]
+    ) -> Dict[str, Any]:
+        """
+        Get walking directions with encoded polyline for map display.
+        
+        Args:
+            waypoints: Ordered list of waypoints to route through
+            
+        Returns:
+            Dict with polyline coordinates and segment info
+        """
+        if len(waypoints) < 2:
+            return {"segments": [], "total_duration_seconds": 0, "total_distance_meters": 0}
+        
+        segments = []
+        total_duration = 0
+        total_distance = 0
+        
+        for i in range(len(waypoints) - 1):
+            origin = waypoints[i]
+            destination = waypoints[i + 1]
+            
+            try:
+                # Get directions with polyline
+                directions = self.client.directions(
+                    origin=f"{origin.lat},{origin.lng}",
+                    destination=f"{destination.lat},{destination.lng}",
+                    mode="walking"
+                )
+                
+                if directions and len(directions) > 0:
+                    route = directions[0]
+                    leg = route.get("legs", [{}])[0]
+                    
+                    # Extract polyline points
+                    polyline_points = []
+                    for step in leg.get("steps", []):
+                        # Decode the polyline
+                        if "polyline" in step and "points" in step["polyline"]:
+                            decoded = self._decode_polyline(step["polyline"]["points"])
+                            polyline_points.extend(decoded)
+                    
+                    duration = leg.get("duration", {}).get("value", 0)
+                    distance = leg.get("distance", {}).get("value", 0)
+                    
+                    segments.append({
+                        "from_index": i,
+                        "to_index": i + 1,
+                        "polyline": polyline_points,
+                        "duration_seconds": duration,
+                        "distance_meters": distance,
+                        "duration_text": leg.get("duration", {}).get("text", ""),
+                        "distance_text": leg.get("distance", {}).get("text", "")
+                    })
+                    
+                    total_duration += duration
+                    total_distance += distance
+                    
+                    logger.info(f"Walking route segment {i}->{i+1}: {duration}s, {distance}m")
+                else:
+                    # Fallback to straight line
+                    segments.append({
+                        "from_index": i,
+                        "to_index": i + 1,
+                        "polyline": [
+                            {"lat": origin.lat, "lng": origin.lng},
+                            {"lat": destination.lat, "lng": destination.lng}
+                        ],
+                        "duration_seconds": 0,
+                        "distance_meters": 0,
+                        "duration_text": "Unknown",
+                        "distance_text": "Unknown"
+                    })
+                    
+            except Exception as e:
+                logger.error(f"Failed to get walking route {i}->{i+1}: {e}")
+                # Fallback to straight line
+                segments.append({
+                    "from_index": i,
+                    "to_index": i + 1,
+                    "polyline": [
+                        {"lat": origin.lat, "lng": origin.lng},
+                        {"lat": destination.lat, "lng": destination.lng}
+                    ],
+                    "duration_seconds": 0,
+                    "distance_meters": 0,
+                    "duration_text": "Unknown",
+                    "distance_text": "Unknown"
+                })
+        
+        return {
+            "segments": segments,
+            "total_duration_seconds": total_duration,
+            "total_distance_meters": total_distance
+        }
+    
+    def _decode_polyline(self, polyline_str: str) -> List[Dict[str, float]]:
+        """Decode a Google Maps encoded polyline string into lat/lng points."""
+        index, lat, lng = 0, 0, 0
+        coordinates = []
+        
+        while index < len(polyline_str):
+            # Decode latitude
+            shift, result = 0, 0
+            while True:
+                b = ord(polyline_str[index]) - 63
+                index += 1
+                result |= (b & 0x1f) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            lat += (~(result >> 1) if (result & 1) else (result >> 1))
+            
+            # Decode longitude
+            shift, result = 0, 0
+            while True:
+                b = ord(polyline_str[index]) - 63
+                index += 1
+                result |= (b & 0x1f) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            lng += (~(result >> 1) if (result & 1) else (result >> 1))
+            
+            coordinates.append({
+                "lat": lat / 1e5,
+                "lng": lng / 1e5
+            })
+        
+        return coordinates
 
 
 # Singleton instance

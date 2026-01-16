@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -23,47 +23,49 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const handleRegister = async () => {
-    console.log('👤 Register button pressed');
-    
-    if (!email || !password || !confirmPassword) {
-      console.log('⚠️  Validation failed: empty fields');
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail || !password || !confirmPassword) {
       Alert.alert('Error', 'Please fill all fields');
       return;
     }
 
     if (password.length < 8) {
-      console.log('⚠️  Validation failed: password too short');
       Alert.alert('Error', 'Password must be at least 8 characters');
       return;
     }
 
     if (password !== confirmPassword) {
-      console.log('⚠️  Validation failed: passwords do not match');
       Alert.alert('Error', 'Passwords do not match');
       return;
     }
 
-    console.log('✅ Validation passed, calling API...');
     setIsLoading(true);
     try {
-      const result = await apiService.register(email, password);
-      console.log('🎉 Registration complete:', result);
+      await apiService.register(trimmedEmail, password);
+      if (!isMountedRef.current) return;
       Alert.alert('Success', 'Account created! Please login.', [
         { text: 'OK', onPress: () => navigation.navigate('Login') }
       ]);
     } catch (error: any) {
-      console.log('💥 Registration error caught in component');
-      const errorMessage = error.response?.data?.detail || error.message || 'Could not create account';
-      console.log('Error message shown to user:', errorMessage);
+      if (!isMountedRef.current) return;
+      // Only surface explicit backend messages; otherwise show a generic message for network/unknown errors.
+      const errorMessage = error?.response?.data?.detail || 'Could not create account';
       Alert.alert(
         'Registration Failed',
         errorMessage
       );
     } finally {
-      setIsLoading(false);
-      console.log('🏁 Registration flow complete');
+      if (isMountedRef.current) setIsLoading(false);
     }
   };
 
@@ -109,11 +111,13 @@ export const RegisterScreen: React.FC<RegisterScreenProps> = ({ navigation }) =>
           onPress={handleRegister}
           disabled={isLoading}
         >
-          {isLoading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.buttonText}>Sign Up</Text>
-          )}
+          {isLoading && <ActivityIndicator testID="loading-indicator" color="#fff" />}
+          <Text
+            style={[styles.buttonText, isLoading && styles.buttonTextLoading]}
+            accessibilityState={{ disabled: isLoading }}
+          >
+            Sign Up
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -175,6 +179,11 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+    marginLeft: 8,
+  },
+  buttonTextLoading: {
+    // Keep the text mounted for tests and accessibility; this also prevents layout jump.
+    marginLeft: 8,
   },
   linkText: {
     color: '#4F46E5',

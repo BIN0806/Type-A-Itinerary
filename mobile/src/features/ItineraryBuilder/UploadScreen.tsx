@@ -188,10 +188,11 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ navigation }) => {
             (selectedImages.length === 0 || isUploading) && styles.buttonDisabled
           ]}
           onPress={uploadImages}
-          disabled={selectedImages.length === 0 || isUploading}
+          disabled={isUploading}
+          accessibilityState={{ disabled: selectedImages.length === 0 || isUploading }}
         >
           {isUploading ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator testID="loading-indicator" color="#fff" />
           ) : (
             <Text style={styles.buttonPrimaryText}>
               Analyze Locations

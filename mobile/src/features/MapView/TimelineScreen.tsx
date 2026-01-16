@@ -83,6 +83,18 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
     }
   };
 
+  // Get best location string for a waypoint (name with address preferred)
+  const getLocationString = (wp: any): string => {
+    if (wp.name && wp.address) {
+      return `${wp.name}, ${wp.address}`;
+    } else if (wp.name) {
+      return wp.name;
+    } else if (wp.address) {
+      return wp.address;
+    }
+    return `${wp.lat},${wp.lng}`;
+  };
+
   const openInGoogleMaps = async () => {
     if (googleMapsUrl) {
       const supported = await Linking.canOpenURL(googleMapsUrl);
@@ -92,16 +104,16 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
         Alert.alert('Error', 'Cannot open Google Maps');
       }
     } else {
-      // Build URL from waypoints
+      // Build URL from waypoints using location names
       if (trip?.waypoints?.length > 0) {
         const waypoints = trip.waypoints;
-        const origin = `${waypoints[0].lat},${waypoints[0].lng}`;
-        const destination = `${waypoints[waypoints.length - 1].lat},${waypoints[waypoints.length - 1].lng}`;
+        const origin = encodeURIComponent(getLocationString(waypoints[0]));
+        const destination = encodeURIComponent(getLocationString(waypoints[waypoints.length - 1]));
         
         let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=walking`;
         
         if (waypoints.length > 2) {
-          const middleWaypoints = waypoints.slice(1, -1).map((wp: any) => `${wp.lat},${wp.lng}`).join('|');
+          const middleWaypoints = waypoints.slice(1, -1).map((wp: any) => getLocationString(wp)).join('|');
           url += `&waypoints=${encodeURIComponent(middleWaypoints)}`;
         }
         

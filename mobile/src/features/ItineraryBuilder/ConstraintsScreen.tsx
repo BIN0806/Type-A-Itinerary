@@ -9,6 +9,7 @@ import {
   TextInput,
   Dimensions,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -28,6 +29,67 @@ interface Waypoint {
   lng: number;
 }
 
+type MapRegion = {
+  latitude: number;
+  longitude: number;
+  latitudeDelta: number;
+  longitudeDelta: number;
+};
+
+const SNAP_TO_WAYPOINT_DISTANCE_METERS = 100;
+
+const toRadians = (deg: number) => (deg * Math.PI) / 180;
+
+// Haversine distance between two points in meters.
+const distanceMeters = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+  const R = 6371000;
+  const dLat = toRadians(b.lat - a.lat);
+  const dLng = toRadians(b.lng - a.lng);
+  const lat1 = toRadians(a.lat);
+  const lat2 = toRadians(b.lat);
+
+  const sinDLat = Math.sin(dLat / 2);
+  const sinDLng = Math.sin(dLng / 2);
+  const h =
+    sinDLat * sinDLat +
+    Math.cos(lat1) * Math.cos(lat2) * (sinDLng * sinDLng);
+  const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  return R * c;
+};
+
+const findNearestWaypoint = (point: { lat: number; lng: number }, wps: Waypoint[]) => {
+  let best: { wp: Waypoint; d: number } | null = null;
+  for (const wp of wps) {
+    if (!Number.isFinite(wp.lat) || !Number.isFinite(wp.lng)) continue;
+    const d = distanceMeters(point, { lat: wp.lat, lng: wp.lng });
+    if (!best || d < best.d) best = { wp, d };
+  }
+  return best;
+};
+
+const computeRegionFromWaypoints = (wps: Waypoint[]): { center: { lat: number; lng: number }; region: MapRegion } | null => {
+  const valid = wps.filter(wp => Number.isFinite(wp.lat) && Number.isFinite(wp.lng));
+  if (valid.length === 0) return null;
+
+  const avgLat = valid.reduce((sum, wp) => sum + wp.lat, 0) / valid.length;
+  const avgLng = valid.reduce((sum, wp) => sum + wp.lng, 0) / valid.length;
+
+  const lats = valid.map(wp => wp.lat);
+  const lngs = valid.map(wp => wp.lng);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+
+  const latitudeDelta = Math.max((maxLat - minLat) * 1.5, 0.05);
+  const longitudeDelta = Math.max((maxLng - minLng) * 1.5, 0.05);
+
+  return {
+    center: { lat: avgLat, lng: avgLng },
+    region: { latitude: avgLat, longitude: avgLng, latitudeDelta, longitudeDelta },
+  };
+};
+
 export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
   navigation,
   route,
@@ -38,6 +100,8 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
   // Start location (pin on map)
   const [startLocation, setStartLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [showMapPicker, setShowMapPicker] = useState(false);
+  const [mapInitialRegion, setMapInitialRegion] = useState<MapRegion | null>(null);
+  const [isLoadingWaypoints, setIsLoadingWaypoints] = useState(true);
   
   // Waypoints for end selection
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
@@ -62,33 +126,46 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
     try {
       const trip = await apiService.getTrip(tripId);
       if (trip.waypoints && trip.waypoints.length > 0) {
-        setWaypoints(trip.waypoints.map((wp: any) => ({
+        const wps: Waypoint[] = trip.waypoints.map((wp: any) => ({
           id: wp.id,
           name: wp.name,
           lat: wp.lat,
           lng: wp.lng,
-        })));
+        }));
+        setWaypoints(wps);
         
-        // Auto-center map on waypoints
-        if (trip.waypoints.length > 0) {
-          const avgLat = trip.waypoints.reduce((sum: number, wp: any) => sum + wp.lat, 0) / trip.waypoints.length;
-          const avgLng = trip.waypoints.reduce((sum: number, wp: any) => sum + wp.lng, 0) / trip.waypoints.length;
-          setStartLocation({ lat: avgLat, lng: avgLng });
+        // Map center: average of all locations. Start: nearest waypoint to that center (exactly one green waypoint pin).
+        const computed = computeRegionFromWaypoints(wps);
+        if (computed) {
+          setMapInitialRegion(computed.region);
+
+          const nearest = findNearestWaypoint(computed.center, wps);
+          if (nearest) {
+            setStartLocation({ lat: nearest.wp.lat, lng: nearest.wp.lng });
+            setSelectedStartWaypoint(nearest.wp.id);
+          }
         }
       }
     } catch (error) {
       console.error('Error loading waypoints:', error);
+    } finally {
+      setIsLoadingWaypoints(false);
     }
   };
 
   const handleMapPress = (event: any) => {
+    // Some map providers emit this action when a marker is pressed; ignore so we don't clear selection.
+    if (event?.nativeEvent?.action === 'marker-press') return;
+
     const { coordinate } = event.nativeEvent;
-    setStartLocation({
-      lat: coordinate.latitude,
-      lng: coordinate.longitude,
-    });
-    // Clear the start waypoint selection if user taps elsewhere
-    setSelectedStartWaypoint(null);
+    const tapped = { lat: coordinate.latitude, lng: coordinate.longitude };
+
+    // Only allow selecting a start by choosing a waypoint pin. If the user taps close enough,
+    // snap/select the nearest waypoint to match intent. Otherwise ignore the tap.
+    const nearest = waypoints.length > 0 ? findNearestWaypoint(tapped, waypoints) : null;
+    if (nearest && nearest.d <= SNAP_TO_WAYPOINT_DISTANCE_METERS) {
+      handleSelectWaypointAsStart(nearest.wp);
+    }
   };
 
   // Handle selecting a waypoint as the start location
@@ -197,62 +274,52 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Starting Point</Text>
           <Text style={styles.sectionSubtitle}>
-            Tap on the map to drop a pin where you'll start
+            Tap a pin to select it as your starting point (green)
           </Text>
           
           <View style={styles.mapContainer}>
-            <MapView
-              ref={mapRef}
-              provider={PROVIDER_GOOGLE}
-              style={styles.map}
-              initialRegion={{
-                latitude: startLocation?.lat || 35.6762,
-                longitude: startLocation?.lng || 139.6503,
-                latitudeDelta: 0.05,
-                longitudeDelta: 0.05,
-              }}
-              onPress={handleMapPress}
-            >
-              {/* Start location marker - only show if NOT at a waypoint */}
-              {startLocation && !selectedStartWaypoint && (
-                <Marker
-                  coordinate={{
-                    latitude: startLocation.lat,
-                    longitude: startLocation.lng,
-                  }}
-                  pinColor="green"
-                  title="Start Here"
-                  description="Your starting point"
-                />
-              )}
-              
-              {/* Waypoint markers - tap to select as start */}
-              {waypoints.map((wp, index) => {
-                const isStart = wp.id === selectedStartWaypoint;
-                const isEnd = wp.id === selectedEndWaypoint;
-                const pinColor = isStart ? 'green' : isEnd ? 'red' : '#4F46E5';
-                
-                return (
-                  <Marker
-                    // Key includes selection state to force re-render on color change
-                    key={`${wp.id}-${isStart ? 'start' : isEnd ? 'end' : 'normal'}`}
-                    coordinate={{
-                      latitude: wp.lat,
-                      longitude: wp.lng,
-                    }}
-                    pinColor={pinColor}
-                    title={wp.name}
-                    description={
-                      isStart ? 'START POINT - Tap another to change' :
-                      isEnd ? 'End Point' : 
-                      `Stop ${index + 1} - Tap to start here`
-                    }
-                    onPress={() => handleSelectWaypointAsStart(wp)}
-                    tracksViewChanges={false}
-                  />
-                );
-              })}
-            </MapView>
+            {mapInitialRegion ? (
+              <MapView
+                ref={mapRef}
+                provider={PROVIDER_GOOGLE}
+                style={styles.map}
+                initialRegion={mapInitialRegion}
+                onPress={handleMapPress}
+              >
+                {/* Waypoint markers - exactly one is green (start), tap any to select as start */}
+                {waypoints.map((wp, index) => {
+                  const isStart = wp.id === selectedStartWaypoint;
+                  const isEnd = wp.id === selectedEndWaypoint && !isStart;
+                  const pinColor = isStart ? 'green' : isEnd ? 'red' : '#4F46E5';
+                  
+                  return (
+                    <Marker
+                      key={wp.id}
+                      coordinate={{
+                        latitude: wp.lat,
+                        longitude: wp.lng,
+                      }}
+                      pinColor={pinColor}
+                      title={wp.name}
+                      description={
+                        isStart ? 'START POINT - Tap another to change' :
+                        isEnd ? 'End Point' : 
+                        `Stop ${index + 1} - Tap to start here`
+                      }
+                      onPress={() => handleSelectWaypointAsStart(wp)}
+                    />
+                  );
+                })}
+              </MapView>
+            ) : (
+              <View style={[styles.map, styles.mapLoading]}>
+                {isLoadingWaypoints ? (
+                  <ActivityIndicator size="large" color="#4F46E5" />
+                ) : (
+                  <Text style={styles.mapLoadingText}>Could not determine map center</Text>
+                )}
+              </View>
+            )}
             
             {startLocation && (
               <View style={styles.coordinatesDisplay}>
@@ -541,6 +608,16 @@ const styles = StyleSheet.create({
   map: {
     width: '100%',
     height: 250,
+  },
+  mapLoading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F3F4F6',
+  },
+  mapLoadingText: {
+    color: '#6B7280',
+    fontSize: 14,
+    fontWeight: '500',
   },
   coordinatesDisplay: {
     backgroundColor: '#fff',

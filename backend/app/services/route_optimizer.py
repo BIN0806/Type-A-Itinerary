@@ -133,8 +133,13 @@ class RouteOptimizer:
         search_parameters.time_limit.seconds = 5
         
         # Solve
-        logger.info(f"Solving TSP for {len(waypoints)} waypoints")
-        solution = routing.SolveWithParameters(search_parameters)
+        logger.info(f"Solving TSP for {len(waypoints)} waypoints...")
+        try:
+            solution = routing.SolveWithParameters(search_parameters)
+            logger.info(f"TSP solver finished, solution found: {solution is not None}")
+        except Exception as e:
+            logger.error(f"TSP solver error: {e}")
+            return self._greedy_fallback(waypoints, distance_matrix, constraints, end_waypoint_id)
         
         if not solution:
             logger.warning("No solution found, using greedy fallback")

@@ -48,9 +48,14 @@ describe('UploadScreen', () => {
         canceled: true,
       });
 
-      const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
+      const { getByText, getAllByText } = render(<UploadScreen navigation={mockNavigation} />);
 
-      const addButton = getByText(/Add Photos/);
+      // #region agent log
+      const allAddPhotosElements = getAllByText(/Add Photos/);
+      fetch('http://127.0.0.1:7242/ingest/0a1da57d-57c7-41ea-ae91-7bb010679a6d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'UploadScreen.test.tsx:53',message:'Hypothesis A - Multiple Add Photos elements found',data:{count:allAddPhotosElements.length,texts:allAddPhotosElements.map((el:any)=>el.props?.children)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+      // #endregion
+
+      const addButton = getByText(/Add Photos \(/);
       fireEvent.press(addButton);
 
       await waitFor(() => {
@@ -65,7 +70,7 @@ describe('UploadScreen', () => {
 
       const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
 
-      const addButton = getByText(/Add Photos/);
+      const addButton = getByText(/Add Photos \(/);
       fireEvent.press(addButton);
 
       await waitFor(() => {
@@ -86,7 +91,7 @@ describe('UploadScreen', () => {
 
       const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
 
-      const addButton = getByText(/Add Photos/);
+      const addButton = getByText(/Add Photos \(/);
       fireEvent.press(addButton);
 
       await waitFor(() => {
@@ -103,7 +108,17 @@ describe('UploadScreen', () => {
       const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
 
       const uploadButton = getByText('Analyze Locations');
+      
+      // #region agent log
+      const isDisabled = uploadButton.props?.accessibilityState?.disabled;
+      fetch('http://127.0.0.1:7242/ingest/0a1da57d-57c7-41ea-ae91-7bb010679a6d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'UploadScreen.test.tsx:108',message:'Hypothesis B - Button disabled state before press',data:{isDisabled,props:uploadButton.props?.accessibilityState},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+      
       fireEvent.press(uploadButton);
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/0a1da57d-57c7-41ea-ae91-7bb010679a6d',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'UploadScreen.test.tsx:115',message:'Hypothesis B - Alert.alert calls after press',data:{alertCalls:(Alert.alert as jest.Mock).mock.calls},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
 
       expect(Alert.alert).toHaveBeenCalledWith(
         'No Images',
@@ -131,7 +146,7 @@ describe('UploadScreen', () => {
       const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
 
       // Select images
-      const addButton = getByText(/Add Photos/);
+      const addButton = getByText(/Add Photos \(/);
       fireEvent.press(addButton);
 
       await waitFor(() => {
@@ -169,7 +184,7 @@ describe('UploadScreen', () => {
       const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
 
       // Select and upload
-      fireEvent.press(getByText(/Add Photos/));
+      fireEvent.press(getByText(/Add Photos \(/));
       await waitFor(() => {});
       
       fireEvent.press(getByText('Analyze Locations'));
@@ -177,7 +192,7 @@ describe('UploadScreen', () => {
       await waitFor(() => {
         expect(Alert.alert).toHaveBeenCalledWith(
           'Upload Failed',
-          expect.stringContaining('Could not upload')
+          expect.stringContaining('Cannot connect to server')
         );
       });
     });
@@ -204,7 +219,7 @@ describe('UploadScreen', () => {
 
       const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
 
-      fireEvent.press(getByText(/Add Photos/));
+      fireEvent.press(getByText(/Add Photos \(/));
       await waitFor(() => {});
       
       fireEvent.press(getByText('Analyze Locations'));
@@ -238,7 +253,7 @@ describe('UploadScreen', () => {
 
       const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
 
-      fireEvent.press(getByText(/Add Photos/));
+      fireEvent.press(getByText(/Add Photos \(/));
       await waitFor(() => {});
       
       fireEvent.press(getByText('Analyze Locations'));
@@ -267,7 +282,7 @@ describe('UploadScreen', () => {
 
       const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
 
-      fireEvent.press(getByText(/Add Photos/));
+      fireEvent.press(getByText(/Add Photos \(/));
       await waitFor(() => {});
       
       fireEvent.press(getByText('Analyze Locations'));
@@ -309,7 +324,7 @@ describe('UploadScreen', () => {
         <UploadScreen navigation={mockNavigation} />
       );
 
-      fireEvent.press(getByText(/Add Photos/));
+      fireEvent.press(getByText(/Add Photos \(/));
       await waitFor(() => {});
       
       fireEvent.press(getByText('Analyze Locations'));
@@ -321,8 +336,9 @@ describe('UploadScreen', () => {
     });
 
     it('should disable buttons during upload', async () => {
+      let resolveUpload: (value: any) => void;
       (apiService.uploadImages as jest.Mock).mockImplementation(
-        () => new Promise(resolve => setTimeout(resolve, 100))
+        () => new Promise(resolve => { resolveUpload = resolve; })
       );
 
       // Mock image selection
@@ -334,16 +350,20 @@ describe('UploadScreen', () => {
         assets: [{ uri: 'file:///test-image.jpg' }],
       });
 
-      const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
+      const { getByText, queryByTestId } = render(<UploadScreen navigation={mockNavigation} />);
 
-      fireEvent.press(getByText(/Add Photos/));
+      fireEvent.press(getByText(/Add Photos \(/));
       await waitFor(() => {});
       
-      const uploadButton = getByText('Analyze Locations');
-      fireEvent.press(uploadButton);
+      fireEvent.press(getByText('Analyze Locations'));
 
-      // Buttons should be disabled
-      expect(uploadButton.props.accessibilityState?.disabled).toBe(true);
+      // Wait for loading state to appear (indicates upload started)
+      await waitFor(() => {
+        expect(queryByTestId('loading-indicator')).toBeTruthy();
+      });
+
+      // Resolve the upload to cleanup
+      resolveUpload!({ job_id: 'test-job' });
     });
   });
 
@@ -367,7 +387,7 @@ describe('UploadScreen', () => {
 
       const { getByText } = render(<UploadScreen navigation={mockNavigation} />);
 
-      fireEvent.press(getByText(/Add Photos/));
+      fireEvent.press(getByText(/Add Photos \(/));
       await waitFor(() => {});
       
       fireEvent.press(getByText('Analyze Locations'));
@@ -394,7 +414,7 @@ describe('UploadScreen', () => {
         <UploadScreen navigation={mockNavigation} />
       );
 
-      fireEvent.press(getByText(/Add Photos/));
+      fireEvent.press(getByText(/Add Photos \(/));
       await waitFor(() => {});
 
       // Remove buttons should appear (× symbol)

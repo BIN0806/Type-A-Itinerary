@@ -17,6 +17,7 @@ import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
 import { Alert } from 'react-native';
 import { ConfirmationScreen } from '../ConfirmationScreen';
 import { apiService } from '../../../services/api';
+import Swiper from 'react-native-deck-swiper';
 
 // Mock navigation
 const mockNavigate = jest.fn();
@@ -277,7 +278,7 @@ describe('ConfirmationScreen', () => {
     });
 
     it('should increment counter after swiping right (confirm)', async () => {
-      const { getByTestId } = render(
+      const { UNSAFE_getByType, getByTestId } = render(
         <ConfirmationScreen navigation={mockNavigation} route={mockRoute} />
       );
 
@@ -287,8 +288,8 @@ describe('ConfirmationScreen', () => {
 
       // Simulate swipe right on first card
       await act(async () => {
-        const swiper = getByTestId('swiper-container');
-        // Trigger onSwiped callback
+        const swiper = UNSAFE_getByType(Swiper);
+        // Trigger onSwiped callback (the testID resolves to a native View, not the Swiper component)
         swiper.props.onSwiped?.(0);
       });
 
@@ -299,7 +300,7 @@ describe('ConfirmationScreen', () => {
     });
 
     it('should increment counter after swiping left (skip)', async () => {
-      const { getByTestId } = render(
+      const { UNSAFE_getByType, getByTestId } = render(
         <ConfirmationScreen navigation={mockNavigation} route={mockRoute} />
       );
 
@@ -309,7 +310,7 @@ describe('ConfirmationScreen', () => {
 
       // Simulate swipe left on first card
       await act(async () => {
-        const swiper = getByTestId('swiper-container');
+        const swiper = UNSAFE_getByType(Swiper);
         swiper.props.onSwipedLeft?.(0);
         swiper.props.onSwiped?.(0);
       });
@@ -346,7 +347,7 @@ describe('ConfirmationScreen', () => {
     });
 
     it('should show summary screen after all cards swiped', async () => {
-      const { getByTestId, queryByTestId } = render(
+      const { UNSAFE_getByType, queryByTestId } = render(
         <ConfirmationScreen navigation={mockNavigation} route={mockRoute} />
       );
 
@@ -357,7 +358,7 @@ describe('ConfirmationScreen', () => {
       // Swipe through all cards
       for (let i = 0; i < mockCandidates.length; i++) {
         await act(async () => {
-          const swiper = getByTestId('swiper-container');
+          const swiper = UNSAFE_getByType(Swiper);
           swiper.props.onSwipedRight?.(i);
           swiper.props.onSwiped?.(i);
         });
@@ -370,7 +371,7 @@ describe('ConfirmationScreen', () => {
     });
 
     it('should display all confirmed locations in summary', async () => {
-      const { getByTestId, getAllByTestId } = render(
+      const { UNSAFE_getByType, getAllByTestId } = render(
         <ConfirmationScreen navigation={mockNavigation} route={mockRoute} />
       );
 
@@ -381,7 +382,7 @@ describe('ConfirmationScreen', () => {
       // Confirm first 3 cards
       for (let i = 0; i < 3; i++) {
         await act(async () => {
-          const swiper = getByTestId('swiper-container');
+          const swiper = UNSAFE_getByType(Swiper);
           swiper.props.onSwipedRight?.(i);
           swiper.props.onSwiped?.(i);
         });
@@ -390,7 +391,7 @@ describe('ConfirmationScreen', () => {
       // Skip remaining cards
       for (let i = 3; i < mockCandidates.length; i++) {
         await act(async () => {
-          const swiper = getByTestId('swiper-container');
+          const swiper = UNSAFE_getByType(Swiper);
           swiper.props.onSwipedLeft?.(i);
           swiper.props.onSwiped?.(i);
         });
@@ -403,7 +404,7 @@ describe('ConfirmationScreen', () => {
     });
 
     it('should allow editing a location from summary', async () => {
-      const { getByTestId, queryByTestId } = render(
+      const { UNSAFE_getByType, getByTestId, queryByTestId } = render(
         <ConfirmationScreen navigation={mockNavigation} route={mockRoute} />
       );
 
@@ -414,7 +415,7 @@ describe('ConfirmationScreen', () => {
       // Swipe all cards right
       for (let i = 0; i < mockCandidates.length; i++) {
         await act(async () => {
-          const swiper = getByTestId('swiper-container');
+          const swiper = UNSAFE_getByType(Swiper);
           swiper.props.onSwipedRight?.(i);
           swiper.props.onSwiped?.(i);
         });
@@ -450,7 +451,7 @@ describe('ConfirmationScreen', () => {
     });
 
     it('should show auto-suggestions when typing', async () => {
-      const { getByTestId, queryByTestId, queryAllByTestId } = render(
+      const { UNSAFE_getByType, getByTestId, queryByTestId, queryAllByTestId } = render(
         <ConfirmationScreen navigation={mockNavigation} route={mockRoute} />
       );
 
@@ -461,7 +462,7 @@ describe('ConfirmationScreen', () => {
       // Swipe all cards and go to summary
       for (let i = 0; i < mockCandidates.length; i++) {
         await act(async () => {
-          const swiper = getByTestId('swiper-container');
+          const swiper = UNSAFE_getByType(Swiper);
           swiper.props.onSwipedRight?.(i);
           swiper.props.onSwiped?.(i);
         });
@@ -495,7 +496,7 @@ describe('ConfirmationScreen', () => {
     });
 
     it('should update location when suggestion selected', async () => {
-      const { getByTestId, queryByTestId } = render(
+      const { UNSAFE_getByType, getByTestId, queryByTestId } = render(
         <ConfirmationScreen navigation={mockNavigation} route={mockRoute} />
       );
 
@@ -506,7 +507,7 @@ describe('ConfirmationScreen', () => {
       // Swipe all and open edit
       for (let i = 0; i < mockCandidates.length; i++) {
         await act(async () => {
-          const swiper = getByTestId('swiper-container');
+          const swiper = UNSAFE_getByType(Swiper);
           swiper.props.onSwipedRight?.(i);
           swiper.props.onSwiped?.(i);
         });

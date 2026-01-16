@@ -16,7 +16,19 @@ class TestExtractFromOCRResult:
         
         assert len(candidates) > 0
         assert any("Eiffel" in c.name for c in candidates)
+        # Pin extraction should keep common comma-separated formats.
+        assert any("Paris" in c.name for c in candidates)
         # Location pin should have high confidence
+        assert any(c.confidence >= 0.90 for c in candidates)
+
+    def test_extract_location_pin_variant_and_trailing_caption(self):
+        ocr_result = {
+            "text": "New spot!\n📌 Paris, France | follow for more\nMore text",
+            "confidence": 0.9,
+        }
+        candidates = entity_extractor.extract_from_ocr_result(ocr_result)
+
+        assert any(c.name == "Paris, France" for c in candidates)
         assert any(c.confidence >= 0.90 for c in candidates)
     
     def test_extract_at_mention(self):

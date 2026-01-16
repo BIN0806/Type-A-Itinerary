@@ -5,7 +5,7 @@
 
 set -e  # Exit on error
 
-echo "🚀 V2V Project Setup"
+echo "Project Setup"
 echo "===================="
 echo ""
 

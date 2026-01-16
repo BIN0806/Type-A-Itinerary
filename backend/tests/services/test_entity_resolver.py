@@ -15,7 +15,8 @@ class TestResolveDuplicates:
             CandidateLocation(name="The Eiffel Tower", confidence=0.75)
         ]
         
-        resolved = resolver.resolve_duplicates(candidates)
+        resolution = resolver.resolve_duplicates(candidates)
+        resolved = resolution["candidates"]
         
         # Should merge into single entity
         assert len(resolved) == 1
@@ -30,7 +31,8 @@ class TestResolveDuplicates:
             CandidateLocation(name="Notre Dame", confidence=0.90)
         ]
         
-        resolved = resolver.resolve_duplicates(candidates)
+        resolution = resolver.resolve_duplicates(candidates)
+        resolved = resolution["candidates"]
         
         # Should keep all distinct locations
         assert len(resolved) == 3
@@ -52,7 +54,8 @@ class TestResolveDuplicates:
             )
         ]
         
-        resolved = resolver.resolve_duplicates(candidates)
+        resolution = resolver.resolve_duplicates(candidates)
+        resolved = resolution["candidates"]
         
         # Should merge nearby duplicates
         assert len(resolved) == 1
@@ -61,9 +64,9 @@ class TestResolveDuplicates:
     
     def test_empty_list(self):
         resolver = EntityResolver()
-        resolved = resolver.resolve_duplicates([])
+        resolution = resolver.resolve_duplicates([])
         
-        assert resolved == []
+        assert resolution == {"candidates": [], "duplicates_merged": []}
     
     def test_single_candidate(self):
         resolver = EntityResolver()
@@ -71,7 +74,8 @@ class TestResolveDuplicates:
             CandidateLocation(name="Eiffel Tower", confidence=0.85)
         ]
         
-        resolved = resolver.resolve_duplicates(candidates)
+        resolution = resolver.resolve_duplicates(candidates)
+        resolved = resolution["candidates"]
         
         assert len(resolved) == 1
         assert resolved[0].name == "Eiffel Tower"

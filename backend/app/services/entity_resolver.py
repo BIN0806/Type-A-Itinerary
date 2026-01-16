@@ -24,19 +24,24 @@ class EntityResolver:
     
     def resolve_duplicates(
         self,
-        candidates: List[CandidateLocation]
-    ) -> List[CandidateLocation]:
+        candidates: List[CandidateLocation],
+        track_duplicates: bool = True
+    ) -> dict:
         """
         Resolve duplicate entities through text similarity and geocoding.
         
         Args:
             candidates: List of candidate locations
+            track_duplicates: Whether to return duplicate info
             
         Returns:
-            Deduplicated list with merged confidence scores
+            Dict with 'candidates' (deduplicated list) and 'duplicates_merged' (list of merged names)
         """
         if not candidates:
-            return []
+            return {"candidates": [], "duplicates_merged": []}
+        
+        original_count = len(candidates)
+        original_names = [c.name for c in candidates]
         
         # Step 1: Text-based deduplication
         text_merged = self._merge_by_text_similarity(candidates)
@@ -49,7 +54,28 @@ class EntityResolver:
         # Step 3: Sort by confidence
         geo_merged.sort(key=lambda x: x.confidence, reverse=True)
         
-        return geo_merged
+        # Track which names were merged as duplicates
+        duplicates_merged = []
+        if track_duplicates and len(geo_merged) < original_count:
+            final_names = set(c.name.lower() for c in geo_merged)
+            for name in original_names:
+                if name.lower() not in final_names:
+                    # Check if it was merged into another name
+                    for final_name in final_names:
+                        if calculate_similarity(name.lower(), final_name) > self.similarity_threshold:
+                            duplicates_merged.append({
+                                "original": name,
+                                "merged_into": next(c.name for c in geo_merged if c.name.lower() == final_name)
+                            })
+                            break
+            
+            if duplicates_merged:
+                logger.info(f"Duplicates merged: {duplicates_merged}")
+        
+        return {
+            "candidates": geo_merged,
+            "duplicates_merged": duplicates_merged
+        }
     
     def _merge_by_text_similarity(
         self,

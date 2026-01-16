@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 class EntityExtractor:
     """Service for extracting location entities from text with confidence scoring."""
+
+    # Social captions commonly use either of these to denote a tagged location.
+    PIN_EMOJIS = ("📍", "📌")
     
     # Common non-location keywords to filter out
     NON_LOCATION_KEYWORDS = {
@@ -37,6 +40,12 @@ class EntityExtractor:
     
     # Minimum length for proper noun extraction
     MIN_LOCATION_LENGTH = 4
+
+    # Common short location abbreviations that appear in social captions / OCR.
+    # Keep this list tight to avoid false positives from random OCR fragments.
+    COMMON_LOCATION_ABBREVIATIONS = {
+        "NYC", "LA", "SF", "DC", "NY",
+    }
     
     # Words that indicate a location when present
     LOCATION_INDICATOR_WORDS = {
@@ -115,10 +124,63 @@ class EntityExtractor:
         return candidates
     
     def _extract_location_pins(self, text: str) -> List[str]:
-        """Extract locations marked with pin emoji (📍)."""
-        pattern = r'📍\s*([^📍\n,]+?)(?:\s|,|\n|$)'
-        matches = re.findall(pattern, text)
-        return [m.strip() for m in matches if len(m.strip()) > 2]
+        """Extract locations marked with pin emoji (📍/📌).
+
+        Social captions often use patterns like:
+        - "📍 Paris, France"
+        - "Some text…\n📍 Liberty Bagels | follow for more"
+        - "📍Paris, France • 8pm"
+
+        We treat the pin as a strong signal and extract the chunk that follows it,
+        trimming common caption separators and hashtags.
+        """
+        if not text:
+            return []
+
+        results: List[str] = []
+
+        # Line-based parsing is more robust than a single regex for social captions.
+        for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            if not line:
+                continue
+
+            for pin in self.PIN_EMOJIS:
+                if pin not in line:
+                    continue
+
+                # Allow multiple pins on one line: "📍 A ... 📍 B ..."
+                parts = line.split(pin)
+                for raw in parts[1:]:
+                    chunk = raw.strip()
+                    # Drop leading punctuation that often follows the pin.
+                    chunk = re.sub(r"^[\s:;,\-–—•|>]+", "", chunk).strip()
+
+                    # Strip hashtags and common caption separators/trailers.
+                    chunk = chunk.split("#", 1)[0].strip()
+                    chunk = re.split(r"\s[|•]\s", chunk, maxsplit=1)[0].strip()
+                    chunk = re.split(r"\s-\s|\s–\s|\s—\s", chunk, maxsplit=1)[0].strip()
+
+                    # Final cleanup.
+                    chunk = re.sub(r"\s+", " ", chunk).strip(" \t:;,.")
+
+                    if len(chunk) <= 2:
+                        continue
+                    if not re.search(r"[A-Za-z0-9]", chunk):
+                        continue
+
+                    results.append(chunk)
+
+        # Deduplicate case-insensitively while preserving order.
+        seen = set()
+        deduped: List[str] = []
+        for loc in results:
+            key = loc.lower().strip()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(loc)
+
+        return deduped
     
     def _extract_at_mentions(self, text: str) -> List[str]:
         """Extract locations from 'at [Location]' or '@ [Location]' patterns."""
@@ -188,6 +250,10 @@ class EntityExtractor:
         text_lower = text.lower().strip()
         words = text_lower.split()
         
+        # Allow a few common short abbreviations (e.g., "NYC") that otherwise fail heuristics.
+        if text.strip().upper() in self.COMMON_LOCATION_ABBREVIATIONS:
+            return True
+
         # Must be at least MIN_LOCATION_LENGTH characters
         if len(text) < self.MIN_LOCATION_LENGTH:
             logger.debug(f"Rejected '{text}': too short")

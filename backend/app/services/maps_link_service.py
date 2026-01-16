@@ -1,6 +1,6 @@
 import logging
 from typing import List
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 from ..core.config import settings
 from ..db.models import Waypoint
@@ -10,6 +10,20 @@ logger = logging.getLogger(__name__)
 
 class MapsLinkService:
     """Service for generating Google Maps navigation links."""
+    
+    def _get_location_string(self, waypoint: Waypoint) -> str:
+        """
+        Get the best location string for a waypoint.
+        Prefers name with address for clarity, falls back to coordinates.
+        """
+        if waypoint.name and waypoint.address:
+            return f"{waypoint.name}, {waypoint.address}"
+        elif waypoint.name:
+            return waypoint.name
+        elif waypoint.address:
+            return waypoint.address
+        else:
+            return f"{waypoint.lat},{waypoint.lng}"
     
     def generate_link(self, waypoints: List[Waypoint]) -> str:
         """
@@ -27,11 +41,13 @@ class MapsLinkService:
         if len(waypoints) == 1:
             # Single waypoint - just show location
             wp = waypoints[0]
+            location_str = self._get_location_string(wp)
             params = {
                 "api": 1,
-                "query": f"{wp.lat},{wp.lng}",
-                "query_place_id": wp.google_place_id or ""
+                "query": location_str,
             }
+            if wp.google_place_id:
+                params["query_place_id"] = wp.google_place_id
             return f"https://www.google.com/maps/search/?{urlencode(params)}"
         
         # Multiple waypoints - create navigation route
@@ -50,15 +66,15 @@ class MapsLinkService:
             indices = [int(i * step) for i in range(settings.MAX_WAYPOINTS_IN_URL)]
             middle_waypoints = [middle_waypoints[i] for i in indices]
         
-        # Build waypoints string
-        waypoint_coords = [f"{wp.lat},{wp.lng}" for wp in middle_waypoints]
-        waypoints_str = "|".join(waypoint_coords)
+        # Build waypoints string using location names
+        waypoint_names = [self._get_location_string(wp) for wp in middle_waypoints]
+        waypoints_str = "|".join(waypoint_names)
         
-        # Build URL
+        # Build URL using location names instead of coordinates
         params = {
             "api": 1,
-            "origin": f"{origin.lat},{origin.lng}",
-            "destination": f"{destination.lat},{destination.lng}",
+            "origin": self._get_location_string(origin),
+            "destination": self._get_location_string(destination),
             "travelmode": "walking"
         }
         

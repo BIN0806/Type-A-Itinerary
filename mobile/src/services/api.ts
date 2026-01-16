@@ -2,7 +2,7 @@ import axios, { AxiosInstance, AxiosError } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const API_BASE_URL = __DEV__ 
-  ? 'http://10.0.0.175:8000/v1'  // Host machine IP (not localhost - simulator can't reach localhost)
+  ? 'http://10.43.218.160:8000/v1'  // Host machine IP (not localhost - simulator can't reach localhost)
   : 'https://api.plana.app/v1';
 
 class ApiService {
@@ -147,11 +147,23 @@ class ApiService {
   }
 
   async optimizeTrip(tripId: string, constraints: any) {
-    const response = await this.client.post('/trip/optimize', {
-      trip_id: tripId,
-      constraints,
-    });
-    return response.data;
+    console.log('🔄 Starting route optimization...');
+    try {
+      // Transit mode can take longer due to directions API calls
+      const response = await this.client.post('/trip/optimize', {
+        trip_id: tripId,
+        constraints,
+      }, {
+        timeout: 60000, // 60 seconds for optimization (transit needs more time)
+      });
+      console.log('✅ Optimization complete:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('❌ Optimization error:', error.message);
+      console.error('Error code:', error.code);
+      console.error('Response:', error.response?.data);
+      throw error;
+    }
   }
 
   async getMapsLink(tripId: string) {
@@ -166,6 +178,11 @@ class ApiService {
 
   async getTrip(tripId: string) {
     const response = await this.client.get(`/trip/${tripId}`);
+    return response.data;
+  }
+
+  async getTripRoute(tripId: string) {
+    const response = await this.client.get(`/trip/${tripId}/route`);
     return response.data;
   }
 

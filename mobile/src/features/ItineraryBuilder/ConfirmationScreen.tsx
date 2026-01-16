@@ -21,6 +21,9 @@ import { RootStackParamList } from '../../navigation/AppNavigator';
 import { apiService } from '../../services/api';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
+const CARD_HEIGHT = SCREEN_HEIGHT * 0.55;
+// Photo takes ~50% of card, leaving guaranteed space for text below
+const CARD_PHOTO_HEIGHT = Math.min(CARD_HEIGHT * 0.50, 260);
 
 type ConfirmationScreenProps = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Confirmation'>;
@@ -79,11 +82,17 @@ interface FailedImage {
   reason: string;
 }
 
+interface DuplicateMerge {
+  original: string;
+  merged_into: string;
+}
+
 interface ProcessingStats {
   total_images: number;
   successful_images: number;
   failed_count: number;
   locations_found: number;
+  duplicates_count: number;
   processing_time_seconds: number;
 }
 
@@ -107,6 +116,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
   
   // Processing feedback
   const [failedImages, setFailedImages] = useState<FailedImage[]>([]);
+  const [duplicatesMerged, setDuplicatesMerged] = useState<DuplicateMerge[]>([]);
   const [processingStats, setProcessingStats] = useState<ProcessingStats | null>(null);
   
   // Edit modal state
@@ -120,6 +130,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
   // Alternatives modal state
   const [showAlternatives, setShowAlternatives] = useState(false);
   const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
+  const [pendingAlternative, setPendingAlternative] = useState<Alternative | null>(null);
   
   // Refs for cleanup and state tracking
   const swiperRef = useRef<any>(null);
@@ -154,12 +165,27 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
           const candidatesResponse = await apiService.getCandidates(jobId);
           setCandidates(candidatesResponse.candidates || []);
           
-          // Capture failed images and stats for user feedback
+          // Capture failed images, duplicates, and stats for user feedback
           if (candidatesResponse.failed_images) {
             setFailedImages(candidatesResponse.failed_images);
           }
+          if (candidatesResponse.duplicates_merged) {
+            setDuplicatesMerged(candidatesResponse.duplicates_merged);
+          }
           if (candidatesResponse.stats) {
             setProcessingStats(candidatesResponse.stats);
+          }
+          
+          // Notify user about duplicates
+          if (candidatesResponse.duplicates_merged?.length > 0) {
+            const dupNames = candidatesResponse.duplicates_merged
+              .map((d: DuplicateMerge) => `"${d.original}" → "${d.merged_into}"`)
+              .join('\n');
+            Alert.alert(
+              'Duplicate Locations Merged',
+              `Some images contained the same location:\n\n${dupNames}`,
+              [{ text: 'OK' }]
+            );
           }
           
           setScreenState('swiping');
@@ -225,33 +251,46 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
     const candidate = candidates[index];
     if (candidate.alternatives && candidate.alternatives.length > 0) {
       setSelectedCardIndex(index);
+      setPendingAlternative(null);
       setShowAlternatives(true);
     } else {
       Alert.alert('No Alternatives', 'No similar locations found for this place.');
     }
   }, [candidates]);
 
-  // Select alternative
-  const handleSelectAlternative = useCallback((alternative: Alternative) => {
-    if (selectedCardIndex !== null) {
+  const closeAlternatives = useCallback(() => {
+    setShowAlternatives(false);
+    setSelectedCardIndex(null);
+    setPendingAlternative(null);
+  }, []);
+
+  // Confirm chosen alternative (or keep current if none selected)
+  const handleConfirmAlternative = useCallback(() => {
+    if (selectedCardIndex === null) {
+      closeAlternatives();
+      return;
+    }
+
+    // User explicitly confirmed; apply only if they picked an alternative
+    if (pendingAlternative) {
       const updatedCandidate: Candidate = {
         ...candidates[selectedCardIndex],
-        name: alternative.name,
-        google_place_id: alternative.google_place_id,
-        lat: alternative.lat,
-        lng: alternative.lng,
-        address: alternative.address,
-        rating: alternative.rating,
-        photo_url: alternative.photo_url,
+        name: pendingAlternative.name,
+        google_place_id: pendingAlternative.google_place_id,
+        lat: pendingAlternative.lat,
+        lng: pendingAlternative.lng,
+        address: pendingAlternative.address,
+        rating: pendingAlternative.rating,
+        photo_url: pendingAlternative.photo_url,
       };
-      
+
       const newCandidates = [...candidates];
       newCandidates[selectedCardIndex] = updatedCandidate;
       setCandidates(newCandidates);
     }
-    setShowAlternatives(false);
-    setSelectedCardIndex(null);
-  }, [candidates, selectedCardIndex]);
+
+    closeAlternatives();
+  }, [candidates, closeAlternatives, pendingAlternative, selectedCardIndex]);
 
   // Calculate itinerary centroid for proximity-based search
   const getItineraryCentroid = useCallback((): { lat: number; lng: number } | null => {
@@ -705,18 +744,19 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         <Text style={styles.title}>Confirm Locations</Text>
         <Text style={styles.subtitle}>Swipe right to confirm, left to skip</Text>
         
-        {/* Show processing stats if some images failed */}
-        {failedImages.length > 0 && (
+        {/* Show processing stats if some images failed or duplicates found */}
+        {(failedImages.length > 0 || duplicatesMerged.length > 0) && (
           <View style={styles.processingFeedback}>
             <Text style={styles.processingFeedbackText}>
-              {processingStats?.successful_images || (processingStats?.total_images || 0) - failedImages.length} of {processingStats?.total_images || '?'} images had identifiable locations
+              {processingStats?.locations_found || candidates.length} locations from {processingStats?.total_images || '?'} images
+              {duplicatesMerged.length > 0 && ` (${duplicatesMerged.length} duplicates merged)`}
             </Text>
           </View>
         )}
         
         <View style={styles.counterRow}>
           <Text style={styles.counter} testID="swipe-counter">
-            {swipedCount}/{totalCount}
+            {`${swipedCount}/${totalCount}`}
           </Text>
           <Text style={styles.confirmedCounter} testID="confirmed-counter">
             {confirmed.length} confirmed
@@ -725,7 +765,18 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
       </View>
 
       {/* Card Swiper Container - bounded height */}
-      <View style={styles.swiperContainer} testID="swiper-container">
+      {/* In tests we expose swipe callbacks on this wrapper so jest can invoke them directly. */}
+      <View
+        style={styles.swiperContainer}
+        testID="swiper-container"
+        {...(process.env.NODE_ENV === 'test'
+          ? ({
+              onSwiped: handleSwiped,
+              onSwipedLeft: handleSwipeLeft,
+              onSwipedRight: handleSwipeRight,
+            } as any)
+          : {})}
+      >
         <Swiper
           ref={swiperRef}
           cards={candidates}
@@ -733,11 +784,14 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
             <View style={styles.card}>
               {/* Card Photo */}
               {card.photo_url && (
-                <Image
-                  source={{ uri: card.photo_url }}
-                  style={styles.cardPhoto}
-                  testID={`card-photo-${index}`}
-                />
+                <View style={styles.cardPhotoFrame}>
+                  <Image
+                    source={{ uri: card.photo_url }}
+                    style={styles.cardPhoto}
+                    resizeMode="cover"
+                    testID={`card-photo-${index}`}
+                  />
+                </View>
               )}
               
               <View style={styles.cardContent}>
@@ -860,19 +914,31 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         <View style={styles.modal}>
           <View style={styles.alternativesModal}>
             <View style={styles.alternativesHeader}>
-              <Text style={styles.alternativesTitle}>Choose Location</Text>
+              <View style={styles.alternativesHeaderRow}>
+                <TouchableOpacity
+                  style={styles.alternativesCloseX}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close similar places"
+                  onPress={closeAlternatives}
+                >
+                  <Text style={styles.alternativesCloseXText}>×</Text>
+                </TouchableOpacity>
+                <Text style={styles.alternativesTitle}>Similar Places</Text>
+                <View style={styles.alternativesHeaderSpacer} />
+              </View>
               <Text style={styles.alternativesSubtitle}>
-                Select the correct "{candidates[selectedCardIndex].original_query || candidates[selectedCardIndex].name}"
+                Pick one, then confirm to replace "{candidates[selectedCardIndex].original_query || candidates[selectedCardIndex].name}"
               </Text>
             </View>
 
             {/* Current Selection (Primary) */}
             <TouchableOpacity
-              style={[styles.alternativeItem, styles.primaryItem]}
-              onPress={() => {
-                setShowAlternatives(false);
-                setSelectedCardIndex(null);
-              }}
+              style={[
+                styles.alternativeItem,
+                styles.primaryItem,
+                pendingAlternative === null && styles.alternativeItemSelected,
+              ]}
+              onPress={() => setPendingAlternative(null)}
             >
               <View style={styles.alternativeContent}>
                 <View style={[styles.alternativeRank, styles.primaryRank]}>
@@ -900,8 +966,12 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
               showsVerticalScrollIndicator={false}
               renderItem={({ item, index }) => (
                 <TouchableOpacity
-                  style={styles.alternativeItem}
-                  onPress={() => handleSelectAlternative(item)}
+                  style={[
+                    styles.alternativeItem,
+                    pendingAlternative?.google_place_id === item.google_place_id &&
+                      styles.alternativeItemSelected,
+                  ]}
+                  onPress={() => setPendingAlternative(item)}
                 >
                   <View style={styles.alternativeContent}>
                     <View style={styles.alternativeRank}>
@@ -931,13 +1001,12 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
             />
 
             <TouchableOpacity
-              style={styles.closeButton}
-              onPress={() => {
-                setShowAlternatives(false);
-                setSelectedCardIndex(null);
-              }}
+              style={styles.confirmButton}
+              onPress={handleConfirmAlternative}
             >
-              <Text style={styles.closeButtonText}>Keep Current Selection</Text>
+              <Text style={styles.confirmButtonText}>
+                {pendingAlternative ? 'Confirm & Replace' : 'Confirm (Keep Current)'}
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1029,7 +1098,7 @@ const styles = StyleSheet.create({
   },
   // Card styles
   card: {
-    height: SCREEN_HEIGHT * 0.55, // Fixed height
+    height: CARD_HEIGHT, // Fixed height
     borderRadius: 16,
     backgroundColor: '#fff',
     shadowColor: '#000',
@@ -1038,15 +1107,27 @@ const styles = StyleSheet.create({
     shadowRadius: 12,
     elevation: 8,
     overflow: 'hidden',
+    flexDirection: 'column', // Explicit column layout
+  },
+  cardPhotoFrame: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    backgroundColor: '#fff', // same as card: creates a "white frame" around the photo
+    alignItems: 'center',
   },
   cardPhoto: {
     width: '100%',
-    height: 140,
+    height: CARD_PHOTO_HEIGHT,
     backgroundColor: '#E5E7EB',
+    alignSelf: 'center',
+    borderRadius: 14,
   },
   cardContent: {
     flex: 1,
-    padding: 20,
+    paddingHorizontal: 20,
+    paddingTop: 16, // Clear gap below the photo
+    paddingBottom: 20,
+    justifyContent: 'flex-start', // Text flows from top of content area
   },
   cardName: {
     fontSize: 24,
@@ -1246,6 +1327,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
+    zIndex: 1000,
+    elevation: 1000,
   },
   modalContainer: {
     width: '90%',
@@ -1326,6 +1409,29 @@ const styles = StyleSheet.create({
   alternativesHeader: {
     marginBottom: 16,
   },
+  alternativesHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  alternativesHeaderSpacer: {
+    width: 36,
+  },
+  alternativesCloseX: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  alternativesCloseXText: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+    lineHeight: 22,
+  },
   alternativesTitle: {
     fontSize: 22,
     fontWeight: 'bold',
@@ -1346,6 +1452,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+  },
+  alternativeItemSelected: {
+    borderColor: '#4F46E5',
+    backgroundColor: '#EEF2FF',
   },
   primaryItem: {
     backgroundColor: '#EEF2FF',
@@ -1408,17 +1518,17 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     marginLeft: 4,
   },
-  closeButton: {
+  confirmButton: {
     marginTop: 12,
     padding: 14,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#4F46E5',
     borderRadius: 10,
     alignItems: 'center',
   },
-  closeButtonText: {
+  confirmButtonText: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#4B5563',
+    color: '#fff',
   },
   // Failed images feedback styles
   failedImagesContainer: {
