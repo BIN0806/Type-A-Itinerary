@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "V2V",
+    "slug": "v2v-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#4F46E5"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.v2v.mobile",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "V2V needs access to your photo library to upload travel inspiration images.",
+        "NSCameraUsageDescription": "V2V needs access to your camera to take photos of travel locations."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#4F46E5"
+      },
+      "package": "com.v2v.mobile",
+      "permissions": [
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "CAMERA"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "V2V needs access to your photos to upload travel inspiration."
+        }
+      ]
+    ]
+  }
+}
