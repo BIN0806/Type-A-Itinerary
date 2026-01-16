@@ -1,10 +1,10 @@
-# V2V (Visual-to-Voyage) - MVP
+# MVP
 
 Transform travel inspiration into optimized itineraries powered by AI and route optimization.
 
 ## Overview
 
-V2V allows users to upload screenshots from TikTok, Instagram, or their camera roll, automatically extracts location information using OpenAI Vision, and generates mathematically optimized walking routes using Google OR-Tools TSP solver.
+Plan A allows users to upload screenshots from TikTok, Instagram, or their camera roll, automatically extracts location information using OpenAI Vision, and generates mathematically optimized walking routes using Google OR-Tools TSP solver.
 
 ## Architecture
 
@@ -98,18 +98,18 @@ npm run android
 
 ### Implemented (MVP)
 
-- ✅ User authentication (email/password with JWT)
-- ✅ Image upload from camera roll
-- ✅ AI-powered location extraction (OpenAI Vision)
-- ✅ Google Places geocoding with Redis caching
-- ✅ Swipe-to-confirm location UI (Tinder-style)
-- ✅ Trip constraint configuration (start location, time window, walking speed)
-- ✅ TSP route optimization with time windows
-- ✅ Google Distance Matrix caching
-- ✅ Timeline view of optimized itinerary
-- ✅ Map view with route visualization
-- ✅ Google Maps deep-linking for navigation
-- ✅ Rate limiting on upload endpoints
+- User authentication (email/password with JWT)
+- Image upload from camera roll
+- AI-powered location extraction (OpenAI Vision)
+- Google Places geocoding with Redis caching
+- Swipe-to-confirm location UI (Tinder-style)
+- Trip constraint configuration (start location, time window, walking speed)
+- TSP route optimization with time windows
+- Google Distance Matrix caching
+- Timeline view of optimized itinerary
+- Map view with route visualization
+- Google Maps deep-linking for navigation
+- Rate limiting on upload endpoints
 
 ### Out of Scope (Post-MVP)
 

@@ -1,4 +1,4 @@
-# MVP - Quick Start Guide
+# Quick Start Guide
 
 ## Get Running in 5 Minutes
 
@@ -40,9 +40,9 @@ docker-compose up --build
 ```
 
 Wait for services to start. You should see:
-- ✅ PostgreSQL running on port 5432
-- ✅ Redis running on port 6379
-- ✅ FastAPI running on port 8000
+- PostgreSQL running on port 5432
+- Redis running on port 6379
+- FastAPI running on port 8000
 
 Visit http://localhost:8000/docs to see API documentation.
 
@@ -189,9 +189,8 @@ Total: **~$0.10-0.50 per trip** depending on image count.
 ## 📚 Next Steps
 
 1. Read [README.md](README.md) for full documentation
-2. Check [V2V_PROJECT_SPECS.md](V2V_PROJECT_SPECS.md) for architecture details
-3. Explore API docs at http://localhost:8000/docs
-4. Run tests: `cd backend && pytest tests/`
+2. Explore API docs at http://localhost:8000/docs
+3. Run tests: `cd backend && pytest tests/`
 
 ## 🎯 Common Use Cases
 
@@ -220,5 +219,3 @@ Total: **~$0.10-0.50 per trip** depending on image count.
 5. **Realistic timing**: Set "slow" speed if you plan to take photos/browse
 
 ---
-
-Need help? Check the issues in the repo or consult the full README.

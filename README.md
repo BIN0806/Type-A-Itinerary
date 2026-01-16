@@ -4,8 +4,8 @@ Transform travel inspiration into optimized itineraries powered by AI and route 
 
 ## Quick Links
 
-- **[Setup Guide](docs/set-up/QUICKSTART.md)** - Get started in 5 minutes
-- **[Full Documentation](docs/README.md)** - All project documentation
+- **[Setup Guide](./set-up/START.md)** - Get started in 5 minutes
+- **[Full Documentation](./set-up/README.md)** - All project documentation
 - **[Run Tests](run_all_tests.sh)** - Execute all tests with categorization
 
 ## Architecture
