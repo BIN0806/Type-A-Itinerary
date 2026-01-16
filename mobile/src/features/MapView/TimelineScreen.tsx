@@ -7,6 +7,8 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
+  Linking,
+  Platform,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
@@ -18,13 +20,37 @@ type TimelineScreenProps = {
   route: RouteProp<RootStackParamList, 'Timeline'>;
 };
 
+interface TransitStep {
+  type: string;
+  line_name: string;
+  line_color: string;
+  text_color: string;
+  departure_stop: string;
+  arrival_stop: string;
+  num_stops: number;
+  duration_seconds: number;
+  headsign: string;
+}
+
+interface RouteSegment {
+  from_order: number;
+  to_order: number;
+  travel_mode: string;
+  duration_seconds: number;
+  transit_steps?: TransitStep[];
+}
+
 export const TimelineScreen: React.FC<TimelineScreenProps> = ({
   navigation,
   route,
 }) => {
   const { tripId } = route.params;
   const [trip, setTrip] = useState<any>(null);
+  const [routeSegments, setRouteSegments] = useState<RouteSegment[]>([]);
+  const [googleMapsUrl, setGoogleMapsUrl] = useState<string | null>(null);
+  const [travelMode, setTravelMode] = useState<string>('walking');
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedTransitStep, setSelectedTransitStep] = useState<TransitStep | null>(null);
 
   useEffect(() => {
     loadTrip();
@@ -34,10 +60,79 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
     try {
       const response = await apiService.getTrip(tripId);
       setTrip(response);
+      
+      // Try to get maps link
+      try {
+        const mapsData = await apiService.getMapsLink(tripId);
+        setGoogleMapsUrl(mapsData.url);
+      } catch (e) {
+        console.log('Could not get maps link');
+      }
+      
+      // If there's optimization data stored, load route segments
+      if (response.route_segments) {
+        setRouteSegments(response.route_segments);
+      }
+      if (response.travel_mode) {
+        setTravelMode(response.travel_mode);
+      }
     } catch (error: any) {
       Alert.alert('Error', 'Could not load trip details');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const openInGoogleMaps = async () => {
+    if (googleMapsUrl) {
+      const supported = await Linking.canOpenURL(googleMapsUrl);
+      if (supported) {
+        await Linking.openURL(googleMapsUrl);
+      } else {
+        Alert.alert('Error', 'Cannot open Google Maps');
+      }
+    } else {
+      // Build URL from waypoints
+      if (trip?.waypoints?.length > 0) {
+        const waypoints = trip.waypoints;
+        const origin = `${waypoints[0].lat},${waypoints[0].lng}`;
+        const destination = `${waypoints[waypoints.length - 1].lat},${waypoints[waypoints.length - 1].lng}`;
+        
+        let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=walking`;
+        
+        if (waypoints.length > 2) {
+          const middleWaypoints = waypoints.slice(1, -1).map((wp: any) => `${wp.lat},${wp.lng}`).join('|');
+          url += `&waypoints=${encodeURIComponent(middleWaypoints)}`;
+        }
+        
+        const supported = await Linking.canOpenURL(url);
+        if (supported) {
+          await Linking.openURL(url);
+        }
+      }
+    }
+  };
+
+  const getTransitIcon = (type: string): string => {
+    switch (type.toUpperCase()) {
+      case 'SUBWAY':
+      case 'METRO_RAIL':
+        return '🚇';
+      case 'BUS':
+        return '🚌';
+      case 'TRAIN':
+      case 'HEAVY_RAIL':
+      case 'COMMUTER_TRAIN':
+        return '🚆';
+      case 'TRAM':
+      case 'LIGHT_RAIL':
+        return '🚊';
+      case 'FERRY':
+        return '⛴️';
+      case 'WALKING':
+        return '🚶';
+      default:
+        return '🚌';
     }
   };
 
@@ -50,11 +145,58 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
     });
   };
 
-  const calculateWalkingTime = (fromTime: string, toTime: string) => {
+  const calculateTravelTime = (fromTime: string, toTime: string) => {
     const from = new Date(fromTime);
     const to = new Date(toTime);
     const minutes = Math.round((to.getTime() - from.getTime()) / 60000);
     return minutes;
+  };
+
+  const getRouteSegmentForWaypoint = (waypointOrder: number): RouteSegment | undefined => {
+    return routeSegments.find(seg => seg.from_order === waypointOrder);
+  };
+
+  const renderTransitSteps = (segment: RouteSegment) => {
+    if (!segment.transit_steps || segment.transit_steps.length === 0) {
+      return null;
+    }
+
+    return (
+      <View style={styles.transitStepsContainer}>
+        {segment.transit_steps.map((step, idx) => (
+          <TouchableOpacity
+            key={idx}
+            style={styles.transitStep}
+            onPress={() => setSelectedTransitStep(step)}
+          >
+            <View 
+              style={[
+                styles.transitLineIndicator, 
+                { backgroundColor: step.line_color || '#4F46E5' }
+              ]}
+            />
+            <Text style={styles.transitIcon}>{getTransitIcon(step.type)}</Text>
+            <View style={styles.transitStepInfo}>
+              <Text style={[
+                styles.transitLineName,
+                { color: step.line_color || '#4F46E5' }
+              ]}>
+                {step.line_name || step.type}
+              </Text>
+              <Text style={styles.transitStepDetail}>
+                {step.type === 'WALKING' 
+                  ? step.headsign 
+                  : `${step.num_stops} stops • ${step.headsign}`
+                }
+              </Text>
+            </View>
+            <Text style={styles.transitDuration}>
+              {Math.round(step.duration_seconds / 60)} min
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    );
   };
 
   if (isLoading) {
@@ -77,64 +219,148 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.tripName}>{trip.name}</Text>
-        <Text style={styles.tripInfo}>
-          Total time: {trip.total_time_minutes} minutes • {trip.waypoints.length} stops
-        </Text>
+        <View style={styles.tripInfoRow}>
+          <Text style={styles.tripInfo}>
+            {trip.total_time_minutes} min • {trip.waypoints.length} stops
+          </Text>
+          {travelMode === 'transit' && (
+            <View style={styles.transitBadge}>
+              <Text style={styles.transitBadgeText}>🚇 Transit</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       <ScrollView style={styles.timeline}>
-        {trip.waypoints.map((waypoint: any, index: number) => (
-          <View key={waypoint.id}>
-            <View style={styles.timelineItem}>
-              <View style={styles.timelineMarker}>
-                <View style={styles.timelineDot} />
-                {index < trip.waypoints.length - 1 && (
-                  <View style={styles.timelineLine} />
-                )}
-              </View>
-
-              <View style={styles.timelineContent}>
-                <Text style={styles.timelineTime}>
-                  {formatTime(waypoint.arrival_time)} - {formatTime(waypoint.departure_time)}
-                </Text>
-                
-                <View style={styles.activityCard}>
-                  <Text style={styles.activityName}>{waypoint.name}</Text>
-                  {waypoint.address && (
-                    <Text style={styles.activityAddress}>{waypoint.address}</Text>
+        {trip.waypoints.map((waypoint: any, index: number) => {
+          const segment = getRouteSegmentForWaypoint(waypoint.order);
+          const hasTransit = segment?.transit_steps && segment.transit_steps.length > 0;
+          
+          return (
+            <View key={waypoint.id}>
+              <View style={styles.timelineItem}>
+                <View style={styles.timelineMarker}>
+                  <View style={styles.timelineDot} />
+                  {index < trip.waypoints.length - 1 && (
+                    <View style={styles.timelineLine} />
                   )}
-                  <Text style={styles.activityDuration}>
-                    Stay: {waypoint.estimated_stay_duration || 60} minutes
-                  </Text>
                 </View>
-              </View>
-            </View>
 
-            {index < trip.waypoints.length - 1 && (
-              <View style={styles.walkingSegment}>
-                <View style={styles.walkingDots}>
-                  <View style={styles.walkingDot} />
-                  <View style={styles.walkingDot} />
-                  <View style={styles.walkingDot} />
+                <View style={styles.timelineContent}>
+                  <Text style={styles.timelineTime}>
+                    {formatTime(waypoint.arrival_time)} - {formatTime(waypoint.departure_time)}
+                  </Text>
+                  
+                  <View style={styles.activityCard}>
+                    <Text style={styles.activityName}>{waypoint.name}</Text>
+                    {waypoint.address && (
+                      <Text style={styles.activityAddress}>{waypoint.address}</Text>
+                    )}
+                    <Text style={styles.activityDuration}>
+                      Stay: {waypoint.estimated_stay_duration || 60} minutes
+                    </Text>
+                  </View>
                 </View>
-                <Text style={styles.walkingText}>
-                  Walking • {calculateWalkingTime(
-                    waypoint.departure_time,
-                    trip.waypoints[index + 1].arrival_time
-                  )} min
-                </Text>
               </View>
-            )}
-          </View>
-        ))}
+
+              {index < trip.waypoints.length - 1 && (
+                <View style={styles.travelSegment}>
+                  {hasTransit ? (
+                    // Transit route with colored lines
+                    <View style={styles.transitRouteContainer}>
+                      <View style={styles.transitHeader}>
+                        <Text style={styles.transitHeaderText}>
+                          🚇 Transit Route • {calculateTravelTime(
+                            waypoint.departure_time,
+                            trip.waypoints[index + 1].arrival_time
+                          )} min total
+                        </Text>
+                      </View>
+                      {segment && renderTransitSteps(segment)}
+                    </View>
+                  ) : (
+                    // Walking route
+                    <View style={styles.walkingSegment}>
+                      <View style={styles.walkingDots}>
+                        <View style={styles.walkingDot} />
+                        <View style={styles.walkingDot} />
+                        <View style={styles.walkingDot} />
+                      </View>
+                      <Text style={styles.walkingText}>
+                        🚶 Walking • {calculateTravelTime(
+                          waypoint.departure_time,
+                          trip.waypoints[index + 1].arrival_time
+                        )} min
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </View>
+          );
+        })}
       </ScrollView>
+
+      {/* Transit Step Detail Modal */}
+      {selectedTransitStep && (
+        <TouchableOpacity 
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setSelectedTransitStep(null)}
+        >
+          <View style={styles.transitDetailModal}>
+            <View style={[
+              styles.transitDetailHeader,
+              { backgroundColor: selectedTransitStep.line_color || '#4F46E5' }
+            ]}>
+              <Text style={[
+                styles.transitDetailTitle,
+                { color: selectedTransitStep.text_color || '#FFF' }
+              ]}>
+                {getTransitIcon(selectedTransitStep.type)} {selectedTransitStep.line_name}
+              </Text>
+            </View>
+            <View style={styles.transitDetailContent}>
+              <Text style={styles.transitDetailLabel}>Direction</Text>
+              <Text style={styles.transitDetailValue}>{selectedTransitStep.headsign}</Text>
+              
+              <Text style={styles.transitDetailLabel}>From</Text>
+              <Text style={styles.transitDetailValue}>{selectedTransitStep.departure_stop}</Text>
+              
+              <Text style={styles.transitDetailLabel}>To</Text>
+              <Text style={styles.transitDetailValue}>{selectedTransitStep.arrival_stop}</Text>
+              
+              <Text style={styles.transitDetailLabel}>Stops</Text>
+              <Text style={styles.transitDetailValue}>{selectedTransitStep.num_stops} stops</Text>
+              
+              <Text style={styles.transitDetailLabel}>Duration</Text>
+              <Text style={styles.transitDetailValue}>
+                {Math.round(selectedTransitStep.duration_seconds / 60)} minutes
+              </Text>
+            </View>
+            <TouchableOpacity 
+              style={styles.closeDetailButton}
+              onPress={() => setSelectedTransitStep(null)}
+            >
+              <Text style={styles.closeDetailText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      )}
 
       <View style={styles.footer}>
         <TouchableOpacity
           style={styles.button}
           onPress={() => navigation.navigate('MapView', { tripId })}
         >
-          <Text style={styles.buttonText}>View on Map</Text>
+          <Text style={styles.buttonText}>View Map</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.button, styles.buttonGoogleMaps]}
+          onPress={openInGoogleMaps}
+        >
+          <Text style={styles.buttonGoogleMapsText}>Open in Maps</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -142,7 +368,7 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
           onPress={() => navigation.navigate('Navigation', { tripId })}
         >
           <Text style={[styles.buttonText, styles.buttonPrimaryText]}>
-            Start Navigation
+            Start
           </Text>
         </TouchableOpacity>
       </View>
@@ -181,9 +407,25 @@ const styles = StyleSheet.create({
     color: '#111827',
     marginBottom: 8,
   },
+  tripInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   tripInfo: {
     fontSize: 14,
     color: '#6B7280',
+  },
+  transitBadge: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginLeft: 8,
+  },
+  transitBadgeText: {
+    fontSize: 12,
+    color: '#4F46E5',
+    fontWeight: '600',
   },
   timeline: {
     flex: 1,
@@ -251,11 +493,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9CA3AF',
   },
+  travelSegment: {
+    paddingLeft: 56,
+    paddingVertical: 8,
+  },
   walkingSegment: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingLeft: 56,
-    paddingVertical: 12,
+    paddingVertical: 4,
   },
   walkingDots: {
     flexDirection: 'column',
@@ -273,9 +518,116 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     fontStyle: 'italic',
   },
+  // Transit route styles
+  transitRouteContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginRight: 24,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  transitHeader: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  transitHeaderText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  transitStepsContainer: {
+    padding: 8,
+  },
+  transitStep: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    marginBottom: 4,
+  },
+  transitLineIndicator: {
+    width: 4,
+    height: '100%',
+    minHeight: 40,
+    borderRadius: 2,
+    marginRight: 12,
+  },
+  transitIcon: {
+    fontSize: 20,
+    marginRight: 10,
+  },
+  transitStepInfo: {
+    flex: 1,
+  },
+  transitLineName: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  transitStepDetail: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  transitDuration: {
+    fontSize: 13,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  // Transit detail modal
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  transitDetailModal: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    width: '85%',
+    maxWidth: 340,
+    overflow: 'hidden',
+  },
+  transitDetailHeader: {
+    padding: 16,
+  },
+  transitDetailTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  transitDetailContent: {
+    padding: 16,
+  },
+  transitDetailLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 8,
+  },
+  transitDetailValue: {
+    fontSize: 15,
+    color: '#111827',
+    fontWeight: '500',
+  },
+  closeDetailButton: {
+    padding: 16,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+  },
+  closeDetailText: {
+    fontSize: 16,
+    color: '#4F46E5',
+    fontWeight: '600',
+  },
   footer: {
     flexDirection: 'row',
-    padding: 16,
+    padding: 12,
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
@@ -284,19 +636,27 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F3F4F6',
     borderRadius: 8,
-    padding: 16,
+    padding: 14,
     alignItems: 'center',
-    marginHorizontal: 4,
+    marginHorizontal: 3,
   },
   buttonPrimary: {
     backgroundColor: '#4F46E5',
   },
+  buttonGoogleMaps: {
+    backgroundColor: '#10B981',
+  },
   buttonText: {
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     color: '#111827',
   },
   buttonPrimaryText: {
+    color: '#fff',
+  },
+  buttonGoogleMapsText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#fff',
   },
 });

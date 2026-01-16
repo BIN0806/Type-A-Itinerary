@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,14 +7,20 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
-  ScrollView,
   FlatList,
+  Image,
+  ScrollView,
+  Dimensions,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import Swiper from 'react-native-deck-swiper';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { apiService } from '../../services/api';
+
+const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 type ConfirmationScreenProps = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Confirmation'>;
@@ -29,6 +35,7 @@ interface Alternative {
   lng: number;
   rating?: number;
   user_ratings_total?: number;
+  photo_url?: string;
 }
 
 interface Candidate {
@@ -43,91 +50,178 @@ interface Candidate {
   opening_hours?: any;
   alternatives?: Alternative[];
   original_query?: string;
+  photo_url?: string;
 }
+
+interface ConfirmedLocation {
+  name: string;
+  google_place_id: string;
+  lat: number;
+  lng: number;
+  address?: string;
+  rating?: number;
+  photo_url?: string;
+  estimated_stay_duration: number;
+}
+
+interface SearchSuggestion {
+  name: string;
+  place_id: string;
+  address: string;
+  lat?: number;
+  lng?: number;
+  rating?: number;
+  photo_url?: string;
+}
+
+interface FailedImage {
+  index: number;
+  reason: string;
+}
+
+interface ProcessingStats {
+  total_images: number;
+  successful_images: number;
+  failed_count: number;
+  locations_found: number;
+  processing_time_seconds: number;
+}
+
+// Screen states
+type ScreenState = 'loading' | 'swiping' | 'summary';
 
 export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
   navigation,
   route,
 }) => {
   const { jobId } = route.params;
+  
+  // Core state
   const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [confirmed, setConfirmed] = useState<any[]>([]);
+  const [screenState, setScreenState] = useState<ScreenState>('loading');
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [editingName, setEditingName] = useState('');
-  const [isEditMode, setIsEditMode] = useState(false);
+  
+  // Confirmed/Skipped tracking
+  const [confirmed, setConfirmed] = useState<ConfirmedLocation[]>([]);
+  const [skipped, setSkipped] = useState<number[]>([]);
+  
+  // Processing feedback
+  const [failedImages, setFailedImages] = useState<FailedImage[]>([]);
+  const [processingStats, setProcessingStats] = useState<ProcessingStats | null>(null);
+  
+  // Edit modal state
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [isAddingNew, setIsAddingNew] = useState(false); // For adding new locations manually
+  const [searchQuery, setSearchQuery] = useState('');
+  const [cityStateQuery, setCityStateQuery] = useState(''); // City/State filter
+  const [searchSuggestions, setSearchSuggestions] = useState<SearchSuggestion[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  
+  // Alternatives modal state
   const [showAlternatives, setShowAlternatives] = useState(false);
   const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
+  
+  // Refs for cleanup and state tracking
   const swiperRef = useRef<any>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPollingComplete = useRef(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, []);
+
+  // Start polling on mount
   useEffect(() => {
     pollForCandidates();
   }, []);
 
-  const pollForCandidates = async () => {
-    const pollInterval = setInterval(async () => {
+  const pollForCandidates = () => {
+    pollIntervalRef.current = setInterval(async () => {
       try {
         const statusResponse = await apiService.getJobStatus(jobId);
         
         if (statusResponse.status === 'completed') {
-          clearInterval(pollInterval);
+          isPollingComplete.current = true;
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          
           const candidatesResponse = await apiService.getCandidates(jobId);
-          setCandidates(candidatesResponse.candidates);
-          setIsLoading(false);
+          setCandidates(candidatesResponse.candidates || []);
+          
+          // Capture failed images and stats for user feedback
+          if (candidatesResponse.failed_images) {
+            setFailedImages(candidatesResponse.failed_images);
+          }
+          if (candidatesResponse.stats) {
+            setProcessingStats(candidatesResponse.stats);
+          }
+          
+          setScreenState('swiping');
         } else if (statusResponse.status === 'failed') {
-          clearInterval(pollInterval);
+          isPollingComplete.current = true;
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
           Alert.alert('Error', 'Image analysis failed. Please try again.');
           navigation.goBack();
         }
       } catch (error) {
-        clearInterval(pollInterval);
+        isPollingComplete.current = true;
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
         Alert.alert('Error', 'Could not fetch analysis results');
         navigation.goBack();
       }
     }, 2000);
 
-    // Timeout after 60 seconds (reasonable with optimized backend)
-    setTimeout(() => {
-      clearInterval(pollInterval);
-      if (isLoading) {
+    // Timeout only during loading phase
+    timeoutRef.current = setTimeout(() => {
+      // Only trigger timeout if polling hasn't completed
+      if (!isPollingComplete.current) {
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
         Alert.alert('Timeout', 'Analysis is taking longer than expected');
         navigation.goBack();
       }
     }, 60000);
   };
 
-  const handleSwipeRight = (index: number) => {
+  // Handle swipe right (confirm)
+  const handleSwipeRight = useCallback((index: number) => {
     const candidate = candidates[index];
-    setConfirmed(prev => [...prev, {
+    const location: ConfirmedLocation = {
       name: candidate.name,
       google_place_id: candidate.google_place_id,
       lat: candidate.lat,
       lng: candidate.lng,
+      address: candidate.address,
+      rating: candidate.rating,
+      photo_url: candidate.photo_url,
       estimated_stay_duration: 60,
-    }]);
-  };
+    };
+    setConfirmed(prev => [...prev, location]);
+  }, [candidates]);
 
-  const handleSwipeLeft = (index: number) => {
-    // Rejected - do nothing
-  };
+  // Handle swipe left (skip)
+  const handleSwipeLeft = useCallback((index: number) => {
+    setSkipped(prev => [...prev, index]);
+  }, []);
 
-  const handleEdit = () => {
-    const candidate = candidates[currentIndex];
-    setEditingName(candidate.name);
-    setIsEditMode(true);
-  };
-
-  const handleSaveEdit = () => {
-    if (editingName.trim()) {
-      const updatedCandidate = { ...candidates[currentIndex], name: editingName.trim() };
-      const newCandidates = [...candidates];
-      newCandidates[currentIndex] = updatedCandidate;
-      setCandidates(newCandidates);
+  // Handle card swiped (any direction)
+  const handleSwiped = useCallback((index: number) => {
+    const newIndex = index + 1;
+    setCurrentIndex(newIndex);
+    
+    // Check if all cards have been swiped
+    if (newIndex >= candidates.length) {
+      setScreenState('summary');
     }
-    setIsEditMode(false);
-  };
+  }, [candidates.length]);
 
-  const handleShowAlternatives = (index: number) => {
+  // Show alternatives modal
+  const handleShowAlternatives = useCallback((index: number) => {
     const candidate = candidates[index];
     if (candidate.alternatives && candidate.alternatives.length > 0) {
       setSelectedCardIndex(index);
@@ -135,11 +229,11 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
     } else {
       Alert.alert('No Alternatives', 'No similar locations found for this place.');
     }
-  };
+  }, [candidates]);
 
-  const handleSelectAlternative = (alternative: Alternative) => {
+  // Select alternative
+  const handleSelectAlternative = useCallback((alternative: Alternative) => {
     if (selectedCardIndex !== null) {
-      // Update the candidate with the selected alternative
       const updatedCandidate: Candidate = {
         ...candidates[selectedCardIndex],
         name: alternative.name,
@@ -148,6 +242,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         lng: alternative.lng,
         address: alternative.address,
         rating: alternative.rating,
+        photo_url: alternative.photo_url,
       };
       
       const newCandidates = [...candidates];
@@ -156,20 +251,171 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
     }
     setShowAlternatives(false);
     setSelectedCardIndex(null);
-  };
+  }, [candidates, selectedCardIndex]);
 
-  const handleFinish = async () => {
+  // Calculate itinerary centroid for proximity-based search
+  const getItineraryCentroid = useCallback((): { lat: number; lng: number } | null => {
+    if (confirmed.length === 0) return null;
+    
+    const sumLat = confirmed.reduce((sum, loc) => sum + loc.lat, 0);
+    const sumLng = confirmed.reduce((sum, loc) => sum + loc.lng, 0);
+    
+    return {
+      lat: sumLat / confirmed.length,
+      lng: sumLng / confirmed.length
+    };
+  }, [confirmed]);
+
+  // Open edit modal for a confirmed location
+  const handleEditLocation = useCallback((index: number) => {
+    setEditingIndex(index);
+    setIsAddingNew(false);
+    setSearchQuery(confirmed[index].name);
+    setCityStateQuery('');
+    setSearchSuggestions([]);
+  }, [confirmed]);
+
+  // Open modal for adding a new location manually
+  const handleAddNewLocation = useCallback(() => {
+    setEditingIndex(null);
+    setIsAddingNew(true);
+    setSearchQuery('');
+    setCityStateQuery('');
+    setSearchSuggestions([]);
+  }, []);
+
+  // Search for places (with debounce) - uses itinerary centroid for proximity
+  const handleSearchChange = useCallback((text: string) => {
+    setSearchQuery(text);
+    
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    
+    if (text.length < 2) {
+      setSearchSuggestions([]);
+      return;
+    }
+    
+    searchDebounceRef.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        // Use itinerary centroid for proximity search (not device location)
+        const locationContext = getItineraryCentroid();
+        
+        // Build search query with city/state if provided
+        const fullQuery = cityStateQuery.trim() 
+          ? `${text} ${cityStateQuery.trim()}`
+          : text;
+        
+        const response = await apiService.searchPlaces(fullQuery, locationContext);
+        setSearchSuggestions(response.results || []);
+      } catch (error) {
+        console.error('Search failed:', error);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+  }, [getItineraryCentroid, cityStateQuery]);
+
+  // Handle city/state change - re-trigger search
+  const handleCityStateChange = useCallback((text: string) => {
+    setCityStateQuery(text);
+    // Re-trigger search with new city/state if we have a search query
+    if (searchQuery.length >= 2) {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+      searchDebounceRef.current = setTimeout(async () => {
+        setIsSearching(true);
+        try {
+          const locationContext = getItineraryCentroid();
+          const fullQuery = text.trim() 
+            ? `${searchQuery} ${text.trim()}`
+            : searchQuery;
+          const response = await apiService.searchPlaces(fullQuery, locationContext);
+          setSearchSuggestions(response.results || []);
+        } catch (error) {
+          console.error('Search failed:', error);
+        } finally {
+          setIsSearching(false);
+        }
+      }, 300);
+    }
+  }, [searchQuery, getItineraryCentroid]);
+
+  // Select a search suggestion (for both edit and add new)
+  const handleSelectSuggestion = useCallback((suggestion: SearchSuggestion) => {
+    if (editingIndex !== null) {
+      // Editing existing location
+      const updatedConfirmed = [...confirmed];
+      updatedConfirmed[editingIndex] = {
+        ...updatedConfirmed[editingIndex],
+        name: suggestion.name,
+        google_place_id: suggestion.place_id,
+        address: suggestion.address,
+        lat: suggestion.lat || updatedConfirmed[editingIndex].lat,
+        lng: suggestion.lng || updatedConfirmed[editingIndex].lng,
+        rating: suggestion.rating,
+        photo_url: suggestion.photo_url,
+      };
+      setConfirmed(updatedConfirmed);
+    } else if (isAddingNew) {
+      // Adding new location manually
+      const newLocation: ConfirmedLocation = {
+        name: suggestion.name,
+        google_place_id: suggestion.place_id,
+        address: suggestion.address,
+        lat: suggestion.lat || 0,
+        lng: suggestion.lng || 0,
+        rating: suggestion.rating,
+        photo_url: suggestion.photo_url,
+        estimated_stay_duration: 60,
+      };
+      setConfirmed(prev => [...prev, newLocation]);
+    }
+    setEditingIndex(null);
+    setIsAddingNew(false);
+    setSearchQuery('');
+    setCityStateQuery('');
+    setSearchSuggestions([]);
+  }, [editingIndex, isAddingNew, confirmed]);
+
+  // Remove a confirmed location
+  const handleRemoveLocation = useCallback((index: number) => {
+    Alert.alert(
+      'Remove Location',
+      `Remove "${confirmed[index].name}" from your trip?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            setConfirmed(prev => prev.filter((_, i) => i !== index));
+          },
+        },
+      ]
+    );
+  }, [confirmed]);
+
+  // Finish and continue to next screen
+  const handleContinue = async () => {
     if (confirmed.length === 0) {
       Alert.alert('No Locations', 'Please confirm at least one location');
       return;
     }
 
     try {
-      const response = await apiService.confirmWaypoints(
-        jobId,
-        confirmed,
-        'My Trip'
-      );
+      const waypoints = confirmed.map(loc => ({
+        name: loc.name,
+        google_place_id: loc.google_place_id,
+        lat: loc.lat,
+        lng: loc.lng,
+        estimated_stay_duration: loc.estimated_stay_duration,
+      }));
+      
+      const response = await apiService.confirmWaypoints(jobId, waypoints, 'My Trip');
       navigation.navigate('Constraints', { tripId: response.id });
     } catch (error: any) {
       Alert.alert(
@@ -179,141 +425,365 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
     }
   };
 
-  const renderAlternativeItem = ({ item, index }: { item: Alternative; index: number }) => (
-    <TouchableOpacity
-      style={styles.alternativeItem}
-      onPress={() => handleSelectAlternative(item)}
-    >
-      <View style={styles.alternativeContent}>
-        <View style={styles.alternativeRank}>
-          <Text style={styles.alternativeRankText}>{index + 2}</Text>
-        </View>
-        <View style={styles.alternativeDetails}>
-          <Text style={styles.alternativeName}>{item.name}</Text>
-          {item.address && (
-            <Text style={styles.alternativeAddress} numberOfLines={2}>
-              {item.address}
-            </Text>
-          )}
-          {item.rating && (
-            <View style={styles.ratingRow}>
-              <Text style={styles.ratingText}>★ {item.rating.toFixed(1)}</Text>
-              {item.user_ratings_total && (
-                <Text style={styles.ratingCount}>
-                  ({item.user_ratings_total.toLocaleString()} reviews)
-                </Text>
-              )}
-            </View>
-          )}
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-
-  if (isLoading) {
+  // ============================================
+  // RENDER: Loading State
+  // ============================================
+  if (screenState === 'loading') {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#4F46E5" />
+        <ActivityIndicator testID="loading-indicator" size="large" color="#4F46E5" />
         <Text style={styles.loadingText}>Analyzing your photos...</Text>
-        <Text style={styles.loadingSubtext}>Processing images in parallel for speed</Text>
+        <Text style={styles.loadingSubtext}>Processing images</Text>
       </View>
     );
   }
 
-  if (candidates.length === 0) {
+  // ============================================
+  // RENDER: Empty State (with feedback on why)
+  // ============================================
+  if (candidates.length === 0 && screenState !== 'summary') {
     return (
       <View style={styles.emptyContainer}>
         <Text style={styles.emptyText}>No locations found</Text>
         <Text style={styles.emptySubtext}>
-          Try uploading photos with visible location names or landmarks
+          We couldn't identify any locations in your photos
         </Text>
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.buttonText}>Go Back</Text>
+        
+        {/* Show why images failed */}
+        {failedImages.length > 0 && (
+          <View style={styles.failedImagesContainer}>
+            <Text style={styles.failedImagesTitle}>Why it didn't work:</Text>
+            {failedImages.slice(0, 3).map((failed, index) => (
+              <Text key={index} style={styles.failedImageText}>
+                • Image {failed.index}: {failed.reason}
+              </Text>
+            ))}
+            {failedImages.length > 3 && (
+              <Text style={styles.failedImageText}>
+                • ...and {failedImages.length - 3} more
+              </Text>
+            )}
+          </View>
+        )}
+        
+        <View style={styles.tipsContainer}>
+          <Text style={styles.tipsTitle}>Tips for better results:</Text>
+          <Text style={styles.tipText}>• Include photos with visible restaurant/place names</Text>
+          <Text style={styles.tipText}>• Screenshots with location pins work best</Text>
+          <Text style={styles.tipText}>• Avoid photos that only show food without context</Text>
+        </View>
+        
+        {/* Manual entry option */}
+        <View style={styles.manualEntryPrompt}>
+          <Text style={styles.manualEntryText}>
+            Know where you want to go? Add locations manually:
+          </Text>
+          <TouchableOpacity 
+            style={styles.manualEntryButton} 
+            onPress={() => {
+              setScreenState('summary');
+              handleAddNewLocation();
+            }}
+          >
+            <Text style={styles.manualEntryButtonText}>Add Locations Manually</Text>
+          </TouchableOpacity>
+        </View>
+        
+        <TouchableOpacity style={styles.secondaryButton} onPress={() => navigation.goBack()}>
+          <Text style={styles.secondaryButtonText}>Upload Different Photos</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  const currentCandidate = candidates[currentIndex];
-  const hasAlternatives = currentCandidate?.alternatives && currentCandidate.alternatives.length > 0;
+  // ============================================
+  // RENDER: Summary View (after all cards swiped)
+  // ============================================
+  if (screenState === 'summary') {
+    return (
+      <View style={styles.container} testID="summary-view">
+        <View style={styles.summaryHeader}>
+          <Text style={styles.title}>Review Your Trip</Text>
+          <Text style={styles.subtitle}>
+            {confirmed.length} location{confirmed.length !== 1 ? 's' : ''} confirmed
+          </Text>
+        </View>
+
+        <ScrollView style={styles.summaryList} showsVerticalScrollIndicator={false}>
+          {confirmed.map((location, index) => (
+            <View 
+              key={`${location.google_place_id}-${index}`} 
+              style={styles.summaryCard}
+              testID={`summary-location-${index}`}
+            >
+              {location.photo_url && (
+                <Image
+                  source={{ uri: location.photo_url }}
+                  style={styles.summaryPhoto}
+                  testID={`summary-photo-${index}`}
+                />
+              )}
+              <View style={styles.summaryCardContent}>
+                <Text style={styles.summaryCardName}>{location.name}</Text>
+                {location.address && (
+                  <Text style={styles.summaryCardAddress} numberOfLines={2}>
+                    {location.address}
+                  </Text>
+                )}
+                {location.rating && (
+                  <Text style={styles.summaryCardRating}>★ {location.rating.toFixed(1)}</Text>
+                )}
+                <View style={styles.summaryCardActions}>
+                  <TouchableOpacity
+                    style={styles.editLocationButton}
+                    onPress={() => handleEditLocation(index)}
+                    testID={`edit-location-${index}`}
+                  >
+                    <Text style={styles.editLocationButtonText}>Edit</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.removeLocationButton}
+                    onPress={() => handleRemoveLocation(index)}
+                    testID={`remove-location-${index}`}
+                  >
+                    <Text style={styles.removeLocationButtonText}>Remove</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          ))}
+          
+          {/* Add Location Button */}
+          <TouchableOpacity
+            style={styles.addLocationCard}
+            onPress={handleAddNewLocation}
+            testID="add-location-button"
+          >
+            <View style={styles.addLocationContent}>
+              <Text style={styles.addLocationIcon}>+</Text>
+              <View>
+                <Text style={styles.addLocationTitle}>Add a Location</Text>
+                <Text style={styles.addLocationSubtitle}>Search and add places manually</Text>
+              </View>
+            </View>
+          </TouchableOpacity>
+          
+          {confirmed.length === 0 && (
+            <View style={styles.noLocationsMessage}>
+              <Text style={styles.noLocationsText}>No locations confirmed yet</Text>
+              <Text style={styles.noLocationsSubtext}>
+                Add locations using the button above
+              </Text>
+            </View>
+          )}
+        </ScrollView>
+
+        <View style={styles.summaryFooter}>
+          <TouchableOpacity
+            style={[styles.continueButton, confirmed.length === 0 && styles.continueButtonDisabled]}
+            onPress={handleContinue}
+            disabled={confirmed.length === 0}
+          >
+            <Text style={styles.continueButtonText}>
+              Continue to Trip Settings
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Location Edit/Add Modal */}
+        {(editingIndex !== null || isAddingNew) && (
+          <View style={styles.modal} testID="location-edit-modal">
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={styles.keyboardAvoidingModal}
+              keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
+            >
+              <View style={styles.editModal}>
+                <Text style={styles.editModalTitle}>
+                  {isAddingNew ? 'Add Location' : 'Edit Location'}
+                </Text>
+                <Text style={styles.editModalSubtitle}>
+                  {isAddingNew 
+                    ? 'Search for a place to add to your trip'
+                    : 'Search for the correct location'
+                  }
+                </Text>
+                
+                {/* Place name search */}
+                <TextInput
+                  style={styles.searchInput}
+                  value={searchQuery}
+                  onChangeText={handleSearchChange}
+                  placeholder="Restaurant or place name..."
+                  autoFocus
+                  testID="location-search-input"
+                  returnKeyType="search"
+                />
+                
+                {/* City/State input for narrowing search */}
+                <TextInput
+                  style={styles.cityStateInput}
+                  value={cityStateQuery}
+                  onChangeText={handleCityStateChange}
+                  placeholder="City, State (e.g., New York, NY)"
+                  testID="city-state-input"
+                  returnKeyType="search"
+                />
+                
+                {/* Proximity hint */}
+                {confirmed.length > 0 && (
+                  <Text style={styles.proximityHint}>
+                    Results are prioritized near your other stops
+                  </Text>
+                )}
+                
+                {isSearching && (
+                  <ActivityIndicator size="small" color="#4F46E5" style={styles.searchSpinner} />
+                )}
+                
+                <FlatList
+                  data={searchSuggestions}
+                  keyExtractor={(item) => item.place_id}
+                  style={styles.suggestionsList}
+                  keyboardShouldPersistTaps="handled"
+                  renderItem={({ item, index }) => (
+                    <TouchableOpacity
+                      style={styles.suggestionItem}
+                      onPress={() => handleSelectSuggestion(item)}
+                      testID={`suggestion-${index}`}
+                    >
+                      <Text style={styles.suggestionName}>{item.name}</Text>
+                      <Text style={styles.suggestionAddress}>{item.address}</Text>
+                      {item.rating && (
+                        <Text style={styles.suggestionRating}>★ {item.rating.toFixed(1)}</Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
+                  ListEmptyComponent={
+                    searchQuery.length >= 2 && !isSearching ? (
+                      <Text style={styles.noSuggestionsText}>
+                        No results found. Try adding a city/state.
+                      </Text>
+                    ) : (
+                      <Text style={styles.searchHintText}>
+                        Start typing to search for places...
+                      </Text>
+                    )
+                  }
+                />
+                
+                <TouchableOpacity
+                  style={styles.cancelEditButton}
+                  onPress={() => {
+                    setEditingIndex(null);
+                    setIsAddingNew(false);
+                    setSearchQuery('');
+                    setCityStateQuery('');
+                    setSearchSuggestions([]);
+                  }}
+                >
+                  <Text style={styles.cancelEditButtonText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </KeyboardAvoidingView>
+          </View>
+        )}
+      </View>
+    );
+  }
+
+  // ============================================
+  // RENDER: Swiping View (main card interface)
+  // ============================================
+  const swipedCount = currentIndex;
+  const totalCount = candidates.length;
 
   return (
     <View style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
         <Text style={styles.title}>Confirm Locations</Text>
-        <Text style={styles.subtitle}>
-          Swipe right to confirm, left to skip
-        </Text>
-        <Text style={styles.counter}>
-          {confirmed.length} confirmed • {currentIndex + 1}/{candidates.length}
-        </Text>
+        <Text style={styles.subtitle}>Swipe right to confirm, left to skip</Text>
+        
+        {/* Show processing stats if some images failed */}
+        {failedImages.length > 0 && (
+          <View style={styles.processingFeedback}>
+            <Text style={styles.processingFeedbackText}>
+              {processingStats?.successful_images || (processingStats?.total_images || 0) - failedImages.length} of {processingStats?.total_images || '?'} images had identifiable locations
+            </Text>
+          </View>
+        )}
+        
+        <View style={styles.counterRow}>
+          <Text style={styles.counter} testID="swipe-counter">
+            {swipedCount}/{totalCount}
+          </Text>
+          <Text style={styles.confirmedCounter} testID="confirmed-counter">
+            {confirmed.length} confirmed
+          </Text>
+        </View>
       </View>
 
-      <View style={styles.swiperContainer}>
+      {/* Card Swiper Container - bounded height */}
+      <View style={styles.swiperContainer} testID="swiper-container">
         <Swiper
           ref={swiperRef}
           cards={candidates}
           renderCard={(card: Candidate, index: number) => (
             <View style={styles.card}>
+              {/* Card Photo */}
+              {card.photo_url && (
+                <Image
+                  source={{ uri: card.photo_url }}
+                  style={styles.cardPhoto}
+                  testID={`card-photo-${index}`}
+                />
+              )}
+              
               <View style={styles.cardContent}>
                 <Text style={styles.cardName}>{card.name}</Text>
                 {card.address && (
-                  <Text style={styles.cardAddress}>{card.address}</Text>
+                  <Text style={styles.cardAddress} numberOfLines={2}>{card.address}</Text>
                 )}
                 <View style={styles.cardMeta}>
                   <Text style={styles.cardConfidence}>
-                    Confidence: {Math.round(card.confidence * 100)}%
+                    {Math.round(card.confidence * 100)}% match
                   </Text>
                   {card.rating && (
                     <Text style={styles.cardRating}>★ {card.rating.toFixed(1)}</Text>
                   )}
                 </View>
                 {card.description && (
-                  <Text style={styles.cardDescription}>{card.description}</Text>
+                  <Text style={styles.cardDescription} numberOfLines={2}>
+                    {card.description}
+                  </Text>
                 )}
                 
                 {/* Alternatives indicator */}
-                {card.alternatives && card.alternatives.length > 0 && (
-                  <View style={styles.alternativesIndicator}>
-                    <Text style={styles.alternativesText}>
-                      +{card.alternatives.length} similar places found
-                    </Text>
-                  </View>
-                )}
-              </View>
-
-              <View style={styles.cardButtons}>
                 {card.alternatives && card.alternatives.length > 0 && (
                   <TouchableOpacity
                     style={styles.alternativesButton}
                     onPress={() => handleShowAlternatives(index)}
                   >
                     <Text style={styles.alternativesButtonText}>
-                      See {card.alternatives.length} Alternatives
+                      See {card.alternatives.length} similar places
                     </Text>
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity
-                  style={styles.editButton}
-                  onPress={handleEdit}
-                >
-                  <Text style={styles.editButtonText}>Edit Name</Text>
-                </TouchableOpacity>
               </View>
             </View>
           )}
           onSwipedRight={handleSwipeRight}
           onSwipedLeft={handleSwipeLeft}
-          onSwiped={(index) => setCurrentIndex(index + 1)}
+          onSwiped={handleSwiped}
           cardIndex={0}
           backgroundColor="transparent"
           stackSize={3}
-          stackScale={10}
-          stackSeparation={15}
+          stackScale={8}
+          stackSeparation={14}
           animateCardOpacity
+          disableTopSwipe
+          disableBottomSwipe
           overlayLabels={{
             left: {
               title: 'SKIP',
@@ -359,53 +829,38 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         />
       </View>
 
-      <TouchableOpacity
-        style={[styles.finishButton, confirmed.length === 0 && styles.finishButtonDisabled]}
-        onPress={handleFinish}
-        disabled={confirmed.length === 0}
-      >
-        <Text style={styles.finishButtonText}>
-          Continue with {confirmed.length} location{confirmed.length !== 1 ? 's' : ''}
-        </Text>
-      </TouchableOpacity>
-
-      {/* Edit Name Modal */}
-      {isEditMode && (
-        <View style={styles.modal}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Edit Location Name</Text>
-            <TextInput
-              style={styles.modalInput}
-              value={editingName}
-              onChangeText={setEditingName}
-              autoFocus
-            />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => setIsEditMode(false)}
-              >
-                <Text style={styles.modalButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonSave]}
-                onPress={handleSaveEdit}
-              >
-                <Text style={[styles.modalButtonText, { color: '#fff' }]}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
+      {/* Continue Button - fixed at bottom */}
+      <View style={styles.bottomButtonContainer}>
+        <TouchableOpacity
+          style={[styles.finishButton, confirmed.length === 0 && styles.finishButtonDisabled]}
+          onPress={() => {
+            if (currentIndex < candidates.length) {
+              // Still have cards to swipe
+              Alert.alert(
+                'Skip Remaining?',
+                `You still have ${candidates.length - currentIndex} locations to review. Skip them and continue?`,
+                [
+                  { text: 'Keep Reviewing', style: 'cancel' },
+                  { text: 'Skip & Continue', onPress: () => setScreenState('summary') },
+                ]
+              );
+            } else {
+              setScreenState('summary');
+            }
+          }}
+        >
+          <Text style={styles.finishButtonText}>
+            Continue with {confirmed.length} location{confirmed.length !== 1 ? 's' : ''}
+          </Text>
+        </TouchableOpacity>
+      </View>
 
       {/* Alternatives Modal */}
       {showAlternatives && selectedCardIndex !== null && (
         <View style={styles.modal}>
           <View style={styles.alternativesModal}>
             <View style={styles.alternativesHeader}>
-              <Text style={styles.alternativesTitle}>
-                Choose Location
-              </Text>
+              <Text style={styles.alternativesTitle}>Choose Location</Text>
               <Text style={styles.alternativesSubtitle}>
                 Select the correct "{candidates[selectedCardIndex].original_query || candidates[selectedCardIndex].name}"
               </Text>
@@ -440,10 +895,39 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
             {/* Alternatives List */}
             <FlatList
               data={candidates[selectedCardIndex].alternatives}
-              renderItem={renderAlternativeItem}
               keyExtractor={(item) => item.google_place_id}
               style={styles.alternativesList}
               showsVerticalScrollIndicator={false}
+              renderItem={({ item, index }) => (
+                <TouchableOpacity
+                  style={styles.alternativeItem}
+                  onPress={() => handleSelectAlternative(item)}
+                >
+                  <View style={styles.alternativeContent}>
+                    <View style={styles.alternativeRank}>
+                      <Text style={styles.alternativeRankText}>{index + 2}</Text>
+                    </View>
+                    <View style={styles.alternativeDetails}>
+                      <Text style={styles.alternativeName}>{item.name}</Text>
+                      {item.address && (
+                        <Text style={styles.alternativeAddress} numberOfLines={2}>
+                          {item.address}
+                        </Text>
+                      )}
+                      {item.rating && (
+                        <View style={styles.ratingRow}>
+                          <Text style={styles.ratingText}>★ {item.rating.toFixed(1)}</Text>
+                          {item.user_ratings_total && (
+                            <Text style={styles.ratingCount}>
+                              ({item.user_ratings_total.toLocaleString()} reviews)
+                            </Text>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              )}
             />
 
             <TouchableOpacity
@@ -467,6 +951,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#F9FAFB',
   },
+  // Loading styles
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -484,6 +969,7 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 8,
   },
+  // Empty state styles
   emptyContainer: {
     flex: 1,
     justifyContent: 'center',
@@ -502,8 +988,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 24,
   },
+  // Header styles
   header: {
-    padding: 24,
+    padding: 20,
+    paddingTop: 12,
     backgroundColor: '#fff',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
@@ -519,109 +1007,110 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginBottom: 8,
   },
+  counterRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   counter: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: 'bold',
     color: '#4F46E5',
   },
+  confirmedCounter: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#10B981',
+  },
+  // Swiper container - bounded height above button
   swiperContainer: {
     flex: 1,
-    paddingTop: 20,
+    marginBottom: 80, // Space for the button
   },
+  // Card styles
   card: {
-    flex: 0.75,
+    height: SCREEN_HEIGHT * 0.55, // Fixed height
     borderRadius: 16,
     backgroundColor: '#fff',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-    padding: 24,
-    justifyContent: 'space-between',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 8,
+    overflow: 'hidden',
+  },
+  cardPhoto: {
+    width: '100%',
+    height: 140,
+    backgroundColor: '#E5E7EB',
   },
   cardContent: {
     flex: 1,
+    padding: 20,
   },
   cardName: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: 'bold',
     color: '#111827',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   cardAddress: {
-    fontSize: 16,
+    fontSize: 14,
     color: '#6B7280',
     marginBottom: 8,
   },
   cardMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 8,
   },
   cardConfidence: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#4F46E5',
     fontWeight: '600',
   },
   cardRating: {
-    fontSize: 14,
+    fontSize: 13,
     color: '#F59E0B',
     fontWeight: '600',
-    marginLeft: 16,
+    marginLeft: 12,
   },
   cardDescription: {
     fontSize: 14,
     color: '#6B7280',
-    marginTop: 12,
     lineHeight: 20,
   },
-  alternativesIndicator: {
-    marginTop: 16,
-    padding: 12,
-    backgroundColor: '#EEF2FF',
-    borderRadius: 8,
-  },
-  alternativesText: {
-    fontSize: 14,
-    color: '#4F46E5',
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  cardButtons: {
-    gap: 8,
-  },
   alternativesButton: {
-    backgroundColor: '#4F46E5',
-    padding: 12,
+    marginTop: 12,
+    padding: 10,
+    backgroundColor: '#EEF2FF',
     borderRadius: 8,
     alignItems: 'center',
   },
   alternativesButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  editButton: {
-    backgroundColor: '#F3F4F6',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  editButtonText: {
     color: '#4F46E5',
     fontSize: 14,
     fontWeight: '600',
   },
+  // Bottom button container
+  bottomButtonContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: '#F9FAFB',
+    paddingHorizontal: 16,
+    paddingBottom: 24,
+    paddingTop: 8,
+  },
   finishButton: {
     backgroundColor: '#4F46E5',
-    margin: 16,
     padding: 16,
-    borderRadius: 8,
+    borderRadius: 12,
     alignItems: 'center',
   },
   finishButtonDisabled: {
-    opacity: 0.5,
+    backgroundColor: '#9CA3AF',
   },
   finishButtonText: {
     color: '#fff',
@@ -640,55 +1129,193 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  // Summary view styles
+  summaryHeader: {
+    padding: 20,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  summaryList: {
+    flex: 1,
+    padding: 16,
+  },
+  summaryCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginBottom: 12,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  summaryPhoto: {
+    width: '100%',
+    height: 120,
+    backgroundColor: '#E5E7EB',
+  },
+  summaryCardContent: {
+    padding: 16,
+  },
+  summaryCardName: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  summaryCardAddress: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginBottom: 4,
+  },
+  summaryCardRating: {
+    fontSize: 13,
+    color: '#F59E0B',
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  summaryCardActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  editLocationButton: {
+    flex: 1,
+    padding: 10,
+    backgroundColor: '#EEF2FF',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  editLocationButtonText: {
+    color: '#4F46E5',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  removeLocationButton: {
+    flex: 1,
+    padding: 10,
+    backgroundColor: '#FEE2E2',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  removeLocationButtonText: {
+    color: '#DC2626',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  noLocationsMessage: {
+    padding: 40,
+    alignItems: 'center',
+  },
+  noLocationsText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  noLocationsSubtext: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    textAlign: 'center',
+  },
+  summaryFooter: {
+    padding: 16,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+  },
+  continueButton: {
+    backgroundColor: '#4F46E5',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  continueButtonDisabled: {
+    backgroundColor: '#9CA3AF',
+  },
+  continueButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  // Modal styles
   modal: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  modalContent: {
+  modalContainer: {
+    width: '90%',
+    maxHeight: '80%',
+  },
+  // Edit modal
+  editModal: {
     backgroundColor: '#fff',
     borderRadius: 16,
-    padding: 24,
-    width: '80%',
+    padding: 20,
+    maxHeight: SCREEN_HEIGHT * 0.7,
   },
-  modalTitle: {
+  editModalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#111827',
+    marginBottom: 4,
+  },
+  editModalSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
     marginBottom: 16,
   },
-  modalInput: {
+  searchInput: {
     borderWidth: 1,
     borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 12,
+    borderRadius: 10,
+    padding: 14,
     fontSize: 16,
-    marginBottom: 16,
+    marginBottom: 12,
   },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  searchSpinner: {
+    marginVertical: 8,
   },
-  modalButton: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginHorizontal: 4,
+  suggestionsList: {
+    maxHeight: 250,
   },
-  modalButtonCancel: {
-    backgroundColor: '#F3F4F6',
+  suggestionItem: {
+    padding: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
   },
-  modalButtonSave: {
-    backgroundColor: '#4F46E5',
-  },
-  modalButtonText: {
-    fontSize: 16,
+  suggestionName: {
+    fontSize: 15,
     fontWeight: '600',
     color: '#111827',
+    marginBottom: 2,
   },
-  // Alternatives Modal Styles
+  suggestionAddress: {
+    fontSize: 13,
+    color: '#6B7280',
+  },
+  noSuggestionsText: {
+    padding: 20,
+    textAlign: 'center',
+    color: '#9CA3AF',
+  },
+  cancelEditButton: {
+    marginTop: 12,
+    padding: 14,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  cancelEditButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  // Alternatives modal
   alternativesModal: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -715,7 +1342,7 @@ const styles = StyleSheet.create({
   alternativeItem: {
     backgroundColor: '#F9FAFB',
     borderRadius: 12,
-    padding: 16,
+    padding: 14,
     marginBottom: 8,
     borderWidth: 1,
     borderColor: '#E5E7EB',
@@ -723,7 +1350,7 @@ const styles = StyleSheet.create({
   primaryItem: {
     backgroundColor: '#EEF2FF',
     borderColor: '#4F46E5',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   alternativeContent: {
     flexDirection: 'row',
@@ -750,7 +1377,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   alternativeName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#111827',
     marginBottom: 4,
@@ -782,15 +1409,171 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   closeButton: {
-    marginTop: 16,
+    marginTop: 12,
     padding: 14,
     backgroundColor: '#F3F4F6',
-    borderRadius: 8,
+    borderRadius: 10,
     alignItems: 'center',
   },
   closeButtonText: {
     fontSize: 15,
     fontWeight: '600',
     color: '#4B5563',
+  },
+  // Failed images feedback styles
+  failedImagesContainer: {
+    marginTop: 20,
+    padding: 16,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    width: '100%',
+  },
+  failedImagesTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#DC2626',
+    marginBottom: 8,
+  },
+  failedImageText: {
+    fontSize: 13,
+    color: '#7F1D1D',
+    marginBottom: 4,
+  },
+  tipsContainer: {
+    marginTop: 20,
+    padding: 16,
+    backgroundColor: '#EEF2FF',
+    borderRadius: 12,
+    width: '100%',
+  },
+  tipsTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4F46E5',
+    marginBottom: 8,
+  },
+  tipText: {
+    fontSize: 13,
+    color: '#3730A3',
+    marginBottom: 4,
+  },
+  processingFeedback: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 6,
+  },
+  processingFeedbackText: {
+    fontSize: 12,
+    color: '#92400E',
+    textAlign: 'center',
+  },
+  // Manual entry styles
+  manualEntryPrompt: {
+    marginTop: 24,
+    padding: 20,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#BBF7D0',
+    width: '100%',
+    alignItems: 'center',
+  },
+  manualEntryText: {
+    fontSize: 14,
+    color: '#166534',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  manualEntryButton: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  manualEntryButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  secondaryButton: {
+    marginTop: 16,
+    padding: 14,
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+  },
+  secondaryButtonText: {
+    color: '#6B7280',
+    fontSize: 15,
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  // Add location card styles
+  addLocationCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginBottom: 12,
+    padding: 16,
+    borderWidth: 2,
+    borderColor: '#4F46E5',
+    borderStyle: 'dashed',
+  },
+  addLocationContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  addLocationIcon: {
+    fontSize: 28,
+    color: '#4F46E5',
+    fontWeight: '300',
+    marginRight: 16,
+    width: 40,
+    textAlign: 'center',
+  },
+  addLocationTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#4F46E5',
+  },
+  addLocationSubtitle: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  // City/State input
+  cityStateInput: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 14,
+    marginBottom: 8,
+    backgroundColor: '#F9FAFB',
+  },
+  proximityHint: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontStyle: 'italic',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  suggestionRating: {
+    fontSize: 12,
+    color: '#F59E0B',
+    marginTop: 2,
+  },
+  searchHintText: {
+    padding: 20,
+    textAlign: 'center',
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+  },
+  keyboardAvoidingModal: {
+    width: '90%',
+    maxHeight: '85%',
   },
 });

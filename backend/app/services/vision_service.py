@@ -131,16 +131,30 @@ class VisionService:
             # Encode image to base64
             base64_image = base64.b64encode(image_bytes).decode('utf-8')
             
-            # Optimized prompt for faster response
-            prompt = """Extract travel locations from this image. Look for:
-- Location names in text/captions
-- Recognizable landmarks
-- Place names
+            # Enhanced prompt for better location detection
+            prompt = """You are analyzing a travel/food photo to extract location information.
 
-Return JSON array only:
-[{"name": "Place Name", "description": "Brief context", "confidence": 0.95}]
+LOOK CAREFULLY FOR:
+1. Restaurant/cafe/bar names - in signs, menus, receipts, cups, packaging, watermarks
+2. Location text overlays - TikTok/Instagram captions often have location pins or @ mentions
+3. Recognizable landmarks or buildings
+4. Street signs, neighborhood names, city names
+5. Food/drink that's characteristic of a specific famous restaurant (e.g., rainbow bagels = Liberty Bagels)
+6. Receipt headers, branded napkins, or packaging with business names
+7. Background signage or storefronts visible in the image
 
-Return [] if no locations found. Be specific with names."""
+Even if the main subject is food/drinks, there's often a restaurant name visible somewhere.
+If you recognize a famous dish or presentation style, identify the likely restaurant.
+
+Return ONLY a valid JSON array:
+[{"name": "Restaurant or Place Name", "description": "Brief context about what you see", "confidence": 0.85}]
+
+IMPORTANT:
+- Return specific place names, not generic descriptions
+- If you see "Levain Bakery" cookie style, say "Levain Bakery"
+- If you see a rainbow bagel, it's likely "Liberty Bagels" 
+- Confidence: 0.95 for clearly visible names, 0.7-0.85 for recognized famous items
+- Return [] ONLY if you genuinely cannot identify ANY location clue"""
 
             # Call OpenAI Vision API with async client
             response = await self.async_client.chat.completions.create(
@@ -154,14 +168,14 @@ Return [] if no locations found. Be specific with names."""
                                 "type": "image_url",
                                 "image_url": {
                                     "url": f"data:image/jpeg;base64,{base64_image}",
-                                    "detail": "low"  # Use low detail for faster processing
+                                    "detail": "high"  # Use high detail for better recognition
                                 }
                             }
                         ]
                     }
                 ],
-                max_tokens=300,  # Reduced for speed
-                temperature=0.2  # Lower for more consistent responses
+                max_tokens=400,  # Allow longer response for detailed extraction
+                temperature=0.3  # Slight creativity for recognizing famous items
             )
             
             # Parse response
@@ -208,7 +222,7 @@ Return [] if no locations found. Be specific with names."""
         self, 
         images: List[bytes],
         max_concurrent: int = 3  # Limit concurrent API calls to avoid rate limits
-    ) -> List[CandidateLocation]:
+    ) -> dict:
         """
         Analyze multiple images in parallel with rate limiting.
         
@@ -217,7 +231,7 @@ Return [] if no locations found. Be specific with names."""
             max_concurrent: Maximum concurrent API calls
             
         Returns:
-            Combined list of unique candidate locations
+            Dict with 'candidates' (list) and 'failed_images' (list of failure info)
         """
         logger.info(f"Starting parallel analysis of {len(images)} images (max {max_concurrent} concurrent)")
         
@@ -227,7 +241,12 @@ Return [] if no locations found. Be specific with names."""
         async def analyze_with_semaphore(image_bytes: bytes, index: int):
             async with semaphore:
                 logger.info(f"Processing image {index + 1}/{len(images)}")
-                return await self.analyze_image_async(image_bytes)
+                candidates = await self.analyze_image_async(image_bytes)
+                return {
+                    "index": index,
+                    "candidates": candidates,
+                    "success": len(candidates) > 0
+                }
         
         # Run all analyses in parallel (semaphore limits concurrency)
         tasks = [
@@ -237,23 +256,45 @@ Return [] if no locations found. Be specific with names."""
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Collect unique candidates
+        # Collect unique candidates and track failures
         all_candidates = []
+        failed_images = []
         seen_names = set()
         
         for result in results:
             if isinstance(result, Exception):
-                logger.error(f"Image analysis failed: {result}")
+                logger.error(f"Image analysis failed with exception: {result}")
+                failed_images.append({
+                    "index": -1,
+                    "reason": "Processing error occurred"
+                })
                 continue
             
-            for candidate in result:
-                normalized_name = candidate.name.lower().strip()
-                if normalized_name not in seen_names:
-                    seen_names.add(normalized_name)
-                    all_candidates.append(candidate)
+            image_index = result["index"]
+            candidates = result["candidates"]
+            
+            if not candidates:
+                # Track why this image failed
+                failed_images.append({
+                    "index": image_index + 1,  # 1-indexed for user display
+                    "reason": "No recognizable location or landmark found in image"
+                })
+                logger.info(f"Image {image_index + 1} produced no candidates")
+            else:
+                for candidate in candidates:
+                    normalized_name = candidate.name.lower().strip()
+                    if normalized_name not in seen_names:
+                        seen_names.add(normalized_name)
+                        all_candidates.append(candidate)
         
-        logger.info(f"Batch analysis complete: {len(all_candidates)} unique candidates")
-        return all_candidates
+        logger.info(f"Batch analysis complete: {len(all_candidates)} unique candidates, {len(failed_images)} failed images")
+        
+        return {
+            "candidates": all_candidates,
+            "failed_images": failed_images,
+            "total_processed": len(images),
+            "successful_count": len(images) - len(failed_images)
+        }
     
     # Sync wrapper for backwards compatibility
     def analyze_image(self, image_bytes: bytes) -> List[CandidateLocation]:

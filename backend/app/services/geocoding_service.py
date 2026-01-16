@@ -160,6 +160,14 @@ class GeocodingService:
             primary = None
             
             for i, place in enumerate(results["results"][:self.max_alternatives]):
+                # Get photo URL if available
+                photo_url = None
+                photos = place.get("photos", [])
+                if photos:
+                    photo_ref = photos[0].get("photo_reference")
+                    if photo_ref:
+                        photo_url = self._get_photo_url(photo_ref)
+                
                 place_data = {
                     "name": place.get("name", location.name),
                     "description": location.description,
@@ -171,7 +179,8 @@ class GeocodingService:
                     "rating": place.get("rating"),
                     "user_ratings_total": place.get("user_ratings_total", 0),
                     "types": place.get("types", []),
-                    "opening_hours": None  # Skip for speed
+                    "opening_hours": None,  # Skip for speed
+                    "photo_url": photo_url
                 }
                 
                 if i == 0:
@@ -260,6 +269,24 @@ class GeocodingService:
         
         logger.info(f"Parallel geocoding complete: {len(valid_results)} successful")
         return valid_results
+    
+    def _get_photo_url(self, photo_reference: str, max_width: int = 400) -> str:
+        """
+        Generate a Google Places Photo URL.
+        
+        Args:
+            photo_reference: The photo reference from Places API
+            max_width: Maximum width of the photo
+            
+        Returns:
+            URL string for the photo
+        """
+        return (
+            f"https://maps.googleapis.com/maps/api/place/photo"
+            f"?maxwidth={max_width}"
+            f"&photo_reference={photo_reference}"
+            f"&key={settings.GOOGLE_MAPS_API_KEY}"
+        )
     
     def geocode_batch(self, locations: List[CandidateLocation]) -> List[CandidateLocation]:
         """

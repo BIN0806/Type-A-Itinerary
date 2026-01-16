@@ -5,7 +5,7 @@ import logging
 
 from .core.config import settings
 from .core.database import engine, Base
-from .api import auth, trips
+from .api import auth, trips, places
 
 # Configure logging
 logging.basicConfig(
@@ -51,6 +51,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router, prefix=settings.API_V1_PREFIX, tags=["Authentication"])
 app.include_router(trips.router, prefix=settings.API_V1_PREFIX, tags=["Trips"])
+app.include_router(places.router, prefix=settings.API_V1_PREFIX, tags=["Places"])
 
 
 @app.get("/")

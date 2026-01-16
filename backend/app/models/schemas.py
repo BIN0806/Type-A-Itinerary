@@ -53,6 +53,7 @@ class TripConstraints(BaseModel):
     start_time: datetime
     end_time: datetime
     walking_speed: Literal["slow", "moderate", "fast"] = "moderate"
+    travel_mode: Literal["walking", "transit"] = "walking"  # New: transit support
     end_waypoint_id: Optional[UUID] = None  # Optional: which waypoint to end at
     
     @validator("end_time")
@@ -134,16 +135,51 @@ class AnalysisJobResponse(BaseModel):
     error_message: Optional[str] = None
 
 
+class FailedImageInfo(BaseModel):
+    index: int
+    reason: str
+
+
+class ProcessingStats(BaseModel):
+    total_images: int
+    successful_images: int
+    failed_count: int
+    locations_found: int
+    processing_time_seconds: float
+
+
 class AnalysisJobComplete(BaseModel):
     job_id: UUID
     status: str
-    candidates: List[CandidateLocation]
+    candidates: List[dict]  # Location candidates with alternatives
+    failed_images: List[FailedImageInfo] = []
+    stats: Optional[ProcessingStats] = None
 
 
 # Optimization Schemas
 class OptimizationRequest(BaseModel):
     trip_id: UUID
     constraints: TripConstraints
+
+
+class TransitStep(BaseModel):
+    type: str  # "SUBWAY", "BUS", "WALKING", etc.
+    line_name: str
+    line_color: str
+    text_color: str
+    departure_stop: str
+    arrival_stop: str
+    num_stops: int
+    duration_seconds: int
+    headsign: str
+
+
+class RouteSegment(BaseModel):
+    from_order: int
+    to_order: int
+    travel_mode: str
+    duration_seconds: int
+    transit_steps: Optional[List[TransitStep]] = None
 
 
 class OptimizedWaypoint(BaseModel):
@@ -154,12 +190,16 @@ class OptimizedWaypoint(BaseModel):
     lat: float
     lng: float
     google_place_id: Optional[str] = None
+    address: Optional[str] = None
 
 
 class OptimizationResponse(BaseModel):
     trip_id: UUID
     total_time_minutes: int
+    travel_mode: str = "walking"
     waypoints: List[OptimizedWaypoint]
+    route_segments: Optional[List[RouteSegment]] = None  # Transit details between stops
+    google_maps_url: Optional[str] = None  # Direct link to open in Google Maps
 
 
 # Maps Link Schema

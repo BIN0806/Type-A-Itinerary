@@ -41,13 +41,16 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
   
   // Waypoints for end selection
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
+  const [selectedStartWaypoint, setSelectedStartWaypoint] = useState<string | null>(null); // To track if user selected a waypoint as start
   const [selectedEndWaypoint, setSelectedEndWaypoint] = useState<string | null>(null);
   const [showEndPicker, setShowEndPicker] = useState(false);
+  const [showStartPicker, setShowStartPicker] = useState(false); // For selecting start from waypoints
   
   // Time settings
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('18:00');
   const [walkingSpeed, setWalkingSpeed] = useState<'slow' | 'moderate' | 'fast'>('moderate');
+  const [travelMode, setTravelMode] = useState<'walking' | 'transit'>('walking'); // New: transit option
   const [isOptimizing, setIsOptimizing] = useState(false);
 
   // Load waypoints for the trip
@@ -84,11 +87,30 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
       lat: coordinate.latitude,
       lng: coordinate.longitude,
     });
+    // Clear the start waypoint selection if user taps elsewhere
+    setSelectedStartWaypoint(null);
+  };
+
+  // Handle selecting a waypoint as the start location
+  const handleSelectWaypointAsStart = (wp: Waypoint) => {
+    setStartLocation({ lat: wp.lat, lng: wp.lng });
+    setSelectedStartWaypoint(wp.id);
+    
+    // If the same waypoint was selected as end, clear it
+    if (selectedEndWaypoint === wp.id) {
+      setSelectedEndWaypoint(null);
+    }
   };
 
   const handleOptimize = async () => {
     if (!startLocation) {
       Alert.alert('Missing Start', 'Please tap on the map to set your starting point');
+      return;
+    }
+
+    // Validate that start and end are not the same
+    if (selectedStartWaypoint && selectedStartWaypoint === selectedEndWaypoint) {
+      Alert.alert('Invalid Selection', 'Start and end points cannot be the same location');
       return;
     }
 
@@ -110,6 +132,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
         start_time: startDateTime.toISOString(),
         end_time: endDateTime.toISOString(),
         walking_speed: walkingSpeed,
+        travel_mode: travelMode, // Include transit option
       };
 
       // Add end waypoint if selected
@@ -117,7 +140,9 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
         constraints.end_waypoint_id = selectedEndWaypoint;
       }
 
+      console.log('📍 Optimizing trip with constraints:', constraints);
       const response = await apiService.optimizeTrip(tripId, constraints);
+      console.log('✅ Optimization response:', response);
 
       const endWaypointName = selectedEndWaypoint 
         ? waypoints.find(w => w.id === selectedEndWaypoint)?.name 
@@ -125,7 +150,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
 
       Alert.alert(
         'Optimization Complete',
-        `Your itinerary has been optimized!\nTotal time: ${response.total_time_minutes} minutes\nEnding at: ${endWaypointName}`,
+        `Your itinerary has been optimized!\nTotal time: ${response.total_time_minutes} minutes\nMode: ${travelMode === 'transit' ? 'Public Transit' : 'Walking'}\nEnding at: ${endWaypointName}`,
         [
           {
             text: 'View Timeline',
@@ -134,9 +159,20 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
         ]
       );
     } catch (error: any) {
+      console.error('❌ Optimization failed:', error);
+      console.error('Error details:', error.response?.data);
+      
+      const errorMessage = error.response?.data?.detail 
+        || error.message 
+        || 'Could not optimize route. Please try again.';
+      
       Alert.alert(
         'Optimization Failed',
-        error.response?.data?.detail || 'Could not optimize route'
+        errorMessage,
+        [
+          { text: 'Try Again', onPress: handleOptimize },
+          { text: 'Cancel', style: 'cancel' }
+        ]
       );
     } finally {
       setIsOptimizing(false);
@@ -177,8 +213,8 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
               }}
               onPress={handleMapPress}
             >
-              {/* Start location marker */}
-              {startLocation && (
+              {/* Start location marker - only show if NOT at a waypoint */}
+              {startLocation && !selectedStartWaypoint && (
                 <Marker
                   coordinate={{
                     latitude: startLocation.lat,
@@ -186,22 +222,36 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                   }}
                   pinColor="green"
                   title="Start Here"
+                  description="Your starting point"
                 />
               )}
               
-              {/* Waypoint markers */}
-              {waypoints.map((wp, index) => (
-                <Marker
-                  key={wp.id}
-                  coordinate={{
-                    latitude: wp.lat,
-                    longitude: wp.lng,
-                  }}
-                  pinColor={wp.id === selectedEndWaypoint ? 'red' : '#4F46E5'}
-                  title={wp.name}
-                  description={wp.id === selectedEndWaypoint ? 'End Point' : `Stop ${index + 1}`}
-                />
-              ))}
+              {/* Waypoint markers - tap to select as start */}
+              {waypoints.map((wp, index) => {
+                const isStart = wp.id === selectedStartWaypoint;
+                const isEnd = wp.id === selectedEndWaypoint;
+                const pinColor = isStart ? 'green' : isEnd ? 'red' : '#4F46E5';
+                
+                return (
+                  <Marker
+                    // Key includes selection state to force re-render on color change
+                    key={`${wp.id}-${isStart ? 'start' : isEnd ? 'end' : 'normal'}`}
+                    coordinate={{
+                      latitude: wp.lat,
+                      longitude: wp.lng,
+                    }}
+                    pinColor={pinColor}
+                    title={wp.name}
+                    description={
+                      isStart ? 'START POINT - Tap another to change' :
+                      isEnd ? 'End Point' : 
+                      `Stop ${index + 1} - Tap to start here`
+                    }
+                    onPress={() => handleSelectWaypointAsStart(wp)}
+                    tracksViewChanges={false}
+                  />
+                );
+              })}
             </MapView>
             
             {startLocation && (
@@ -257,33 +307,78 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
           </View>
         </View>
 
-        {/* Walking Speed Section */}
+        {/* Travel Mode Section */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Walking Speed</Text>
+          <Text style={styles.sectionTitle}>Travel Mode</Text>
+          <Text style={styles.sectionSubtitle}>
+            Choose how you'll get around
+          </Text>
           
-          <View style={styles.speedButtons}>
-            {(['slow', 'moderate', 'fast'] as const).map((speed) => (
-              <TouchableOpacity
-                key={speed}
-                style={[
-                  styles.speedButton,
-                  walkingSpeed === speed && styles.speedButtonActive
-                ]}
-                onPress={() => setWalkingSpeed(speed)}
-              >
-                <Text style={[
-                  styles.speedButtonText,
-                  walkingSpeed === speed && styles.speedButtonTextActive
-                ]}>
-                  {speed.charAt(0).toUpperCase() + speed.slice(1)}
-                </Text>
-                <Text style={styles.speedButtonSubtext}>
-                  {speed === 'slow' ? '1.2 m/s' : speed === 'moderate' ? '1.4 m/s' : '1.6 m/s'}
-                </Text>
-              </TouchableOpacity>
-            ))}
+          <View style={styles.modeButtons}>
+            <TouchableOpacity
+              style={[
+                styles.modeButton,
+                travelMode === 'walking' && styles.modeButtonActive
+              ]}
+              onPress={() => setTravelMode('walking')}
+            >
+              <Text style={styles.modeEmoji}>🚶</Text>
+              <Text style={[
+                styles.modeButtonText,
+                travelMode === 'walking' && styles.modeButtonTextActive
+              ]}>
+                Walking
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[
+                styles.modeButton,
+                travelMode === 'transit' && styles.modeButtonActive
+              ]}
+              onPress={() => setTravelMode('transit')}
+            >
+              <Text style={styles.modeEmoji}>🚇</Text>
+              <Text style={[
+                styles.modeButtonText,
+                travelMode === 'transit' && styles.modeButtonTextActive
+              ]}>
+                Transit
+              </Text>
+              <Text style={styles.modeSubtext}>Uses trains/buses</Text>
+            </TouchableOpacity>
           </View>
         </View>
+
+        {/* Walking Speed Section - only show for walking mode */}
+        {travelMode === 'walking' && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Walking Speed</Text>
+            
+            <View style={styles.speedButtons}>
+              {(['slow', 'moderate', 'fast'] as const).map((speed) => (
+                <TouchableOpacity
+                  key={speed}
+                  style={[
+                    styles.speedButton,
+                    walkingSpeed === speed && styles.speedButtonActive
+                  ]}
+                  onPress={() => setWalkingSpeed(speed)}
+                >
+                  <Text style={[
+                    styles.speedButtonText,
+                    walkingSpeed === speed && styles.speedButtonTextActive
+                  ]}>
+                    {speed.charAt(0).toUpperCase() + speed.slice(1)}
+                  </Text>
+                  <Text style={styles.speedButtonSubtext}>
+                    {speed === 'slow' ? '1.2 m/s' : speed === 'moderate' ? '1.4 m/s' : '1.6 m/s'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Optimize Button */}
         <TouchableOpacity
@@ -344,27 +439,51 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                 </Text>
               </TouchableOpacity>
               
-              {/* Waypoint options */}
-              {waypoints.map((wp, index) => (
-                <TouchableOpacity
-                  key={wp.id}
-                  style={[
-                    styles.waypointItem,
-                    selectedEndWaypoint === wp.id && styles.waypointItemSelected
-                  ]}
-                  onPress={() => {
-                    setSelectedEndWaypoint(wp.id);
-                    setShowEndPicker(false);
-                  }}
-                >
-                  <Text style={styles.waypointName}>
-                    {index + 1}. {wp.name}
-                  </Text>
-                  <Text style={styles.waypointDescription}>
-                    {wp.lat.toFixed(4)}, {wp.lng.toFixed(4)}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+              {/* Waypoint options - gray out if same as start */}
+              {waypoints.map((wp, index) => {
+                const isStartLocation = selectedStartWaypoint === wp.id;
+                
+                return (
+                  <TouchableOpacity
+                    key={wp.id}
+                    style={[
+                      styles.waypointItem,
+                      selectedEndWaypoint === wp.id && styles.waypointItemSelected,
+                      isStartLocation && styles.waypointItemDisabled
+                    ]}
+                    onPress={() => {
+                      if (!isStartLocation) {
+                        setSelectedEndWaypoint(wp.id);
+                        setShowEndPicker(false);
+                      }
+                    }}
+                    disabled={isStartLocation}
+                  >
+                    <View style={styles.waypointItemRow}>
+                      <Text style={[
+                        styles.waypointName,
+                        isStartLocation && styles.waypointNameDisabled
+                      ]}>
+                        {index + 1}. {wp.name}
+                      </Text>
+                      {isStartLocation && (
+                        <View style={styles.startBadge}>
+                          <Text style={styles.startBadgeText}>START</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={[
+                      styles.waypointDescription,
+                      isStartLocation && styles.waypointDescriptionDisabled
+                    ]}>
+                      {isStartLocation 
+                        ? 'Already selected as starting point'
+                        : `${wp.lat.toFixed(4)}, ${wp.lng.toFixed(4)}`
+                      }
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </ScrollView>
             
             <TouchableOpacity
@@ -603,5 +722,68 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6B7280',
     fontWeight: '600',
+  },
+  // Travel mode styles
+  modeButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  modeButton: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 16,
+    marginHorizontal: 4,
+    alignItems: 'center',
+  },
+  modeButtonActive: {
+    borderColor: '#4F46E5',
+    backgroundColor: '#EEF2FF',
+  },
+  modeEmoji: {
+    fontSize: 28,
+    marginBottom: 8,
+  },
+  modeButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  modeButtonTextActive: {
+    color: '#4F46E5',
+  },
+  modeSubtext: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    marginTop: 2,
+  },
+  // Disabled waypoint styles
+  waypointItemDisabled: {
+    backgroundColor: '#F3F4F6',
+    opacity: 0.6,
+  },
+  waypointItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  waypointNameDisabled: {
+    color: '#9CA3AF',
+  },
+  waypointDescriptionDisabled: {
+    color: '#D1D5DB',
+  },
+  startBadge: {
+    backgroundColor: '#10B981',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  startBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#fff',
   },
 });

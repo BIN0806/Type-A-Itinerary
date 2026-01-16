@@ -168,6 +168,26 @@ class ApiService {
     const response = await this.client.get(`/trip/${tripId}`);
     return response.data;
   }
+
+  // Places search API (for location editing)
+  async searchPlaces(
+    query: string, 
+    locationContext?: { lat: number; lng: number } | null
+  ) {
+    const params: any = { query };
+    if (locationContext) {
+      params.lat = locationContext.lat;
+      params.lng = locationContext.lng;
+    }
+    const response = await this.client.get('/places/search', { params });
+    return response.data;
+  }
+
+  // Get place photo URL
+  async getPlacePhoto(placeId: string) {
+    const response = await this.client.get(`/places/${placeId}/photo`);
+    return response.data;
+  }
 }
 
 export const apiService = new ApiService();

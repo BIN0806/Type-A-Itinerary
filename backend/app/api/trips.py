@@ -53,24 +53,30 @@ async def process_images_background(job_id: UUID, image_bytes_list: List[bytes],
         
         # === PHASE 1: Parallel Image Analysis (60% of progress) ===
         # All images processed concurrently with rate limiting
+        failed_images = []
+        raw_candidates = []
+        
         try:
-            raw_candidates = await asyncio.wait_for(
+            analysis_result = await asyncio.wait_for(
                 vision_service.analyze_images_batch_async(
                     image_bytes_list,
                     max_concurrent=3  # Limit to avoid rate limits
                 ),
                 timeout=25.0  # 25s budget for image analysis
             )
+            raw_candidates = analysis_result.get("candidates", [])
+            failed_images = analysis_result.get("failed_images", [])
         except asyncio.TimeoutError:
             logger.warning("Image analysis phase timed out, proceeding with partial results")
             raw_candidates = []
+            failed_images = [{"index": i+1, "reason": "Processing timed out"} for i in range(len(image_bytes_list))]
         
         job.processed_images = len(image_bytes_list)
         job.progress = 0.6
         db.commit()
         
         elapsed = time.time() - start_time
-        logger.info(f"Phase 1 complete: {len(raw_candidates)} raw candidates in {elapsed:.1f}s")
+        logger.info(f"Phase 1 complete: {len(raw_candidates)} raw candidates, {len(failed_images)} failed in {elapsed:.1f}s")
         
         # === PHASE 2: Entity Resolution (10% of progress) ===
         logger.info(f"Resolving {len(raw_candidates)} raw candidates...")
@@ -125,13 +131,24 @@ async def process_images_background(job_id: UUID, image_bytes_list: List[bytes],
             except asyncio.TimeoutError:
                 logger.warning("Geocoding phase timed out, proceeding with partial results")
         
-        # Mark as completed
+        # Mark as completed - include failed image feedback
         total_time = time.time() - start_time
-        logger.info(f"Processing complete: {len(all_candidates)} candidates in {total_time:.1f}s")
+        logger.info(f"Processing complete: {len(all_candidates)} candidates, {len(failed_images)} failed in {total_time:.1f}s")
         
         job.status = "completed"
         job.progress = 1.0
-        job.candidates = all_candidates
+        # Store both candidates and processing metadata
+        job.candidates = {
+            "locations": all_candidates,
+            "failed_images": failed_images,
+            "stats": {
+                "total_images": len(image_bytes_list),
+                "successful_images": len(image_bytes_list) - len(failed_images),
+                "failed_count": len(failed_images),
+                "locations_found": len(all_candidates),
+                "processing_time_seconds": round(total_time, 1)
+            }
+        }
         db.commit()
         
     except Exception as e:
@@ -243,11 +260,26 @@ async def get_candidates(
             detail=f"Job is not completed yet. Current status: {job.status}"
         )
     
-    return AnalysisJobComplete(
-        job_id=job.id,
-        status=job.status,
-        candidates=job.candidates
-    )
+    # Handle both old format (list) and new format (dict with locations/failed_images)
+    candidates_data = job.candidates
+    if isinstance(candidates_data, list):
+        # Old format - just a list of candidates
+        return AnalysisJobComplete(
+            job_id=job.id,
+            status=job.status,
+            candidates=candidates_data,
+            failed_images=[],
+            stats=None
+        )
+    else:
+        # New format with locations, failed_images, and stats
+        return AnalysisJobComplete(
+            job_id=job.id,
+            status=job.status,
+            candidates=candidates_data.get("locations", []),
+            failed_images=candidates_data.get("failed_images", []),
+            stats=candidates_data.get("stats")
+        )
 
 
 @router.post("/trip/{job_id}/confirm", response_model=TripResponse)
@@ -304,7 +336,7 @@ async def optimize_trip(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Optimize trip route using TSP solver."""
+    """Optimize trip route using TSP solver with walking or transit."""
     # Get trip
     trip = db.query(Trip).filter(
         Trip.id == request.trip_id,
@@ -326,56 +358,103 @@ async def optimize_trip(
             detail="At least 2 waypoints required for optimization"
         )
     
-    # Get distance matrix
-    distance_matrix = distance_matrix_service.get_distance_matrix(
-        waypoints,
-        request.constraints.start_location
-    )
+    travel_mode = request.constraints.travel_mode
+    logger.info(f"Optimizing trip {trip.id} with {len(waypoints)} waypoints using {travel_mode} mode")
     
-    # Optimize route (with optional fixed end waypoint)
-    optimized_waypoints = route_optimizer.solve_tsp(
-        waypoints,
-        distance_matrix,
-        request.constraints,
-        end_waypoint_id=request.constraints.end_waypoint_id
-    )
-    
-    # Update trip
-    trip.status = TripStatus.OPTIMIZED
-    trip.start_location_lat = request.constraints.start_location.lat
-    trip.start_location_lng = request.constraints.start_location.lng
-    trip.start_time = request.constraints.start_time
-    trip.end_time = request.constraints.end_time
-    trip.walking_speed = request.constraints.walking_speed
-    
-    # Calculate total time
-    total_minutes = 0
-    for wp in optimized_waypoints:
-        if wp.arrival_time and wp.departure_time:
-            duration = (wp.departure_time - wp.arrival_time).total_seconds() / 60
-            total_minutes += duration
-    
-    trip.total_time_minutes = int(total_minutes)
-    db.commit()
-    
-    # Build response
-    optimized_data = []
-    for wp in optimized_waypoints:
-        optimized_data.append({
-            "order": wp.order,
-            "name": wp.name,
-            "arrival_time": wp.arrival_time.strftime("%H:%M") if wp.arrival_time else "",
-            "departure_time": wp.departure_time.strftime("%H:%M") if wp.departure_time else "",
-            "lat": wp.lat,
-            "lng": wp.lng,
-            "google_place_id": wp.google_place_id
-        })
-    
-    return OptimizationResponse(
-        trip_id=trip.id,
-        total_time_minutes=trip.total_time_minutes,
-        waypoints=optimized_data
-    )
+    try:
+        # Get distance matrix with transit details
+        matrix_result = distance_matrix_service.get_distance_matrix(
+            waypoints,
+            request.constraints.start_location,
+            mode=travel_mode
+        )
+        
+        distance_matrix = matrix_result["matrix"]
+        transit_details = matrix_result.get("transit_details", {})
+        
+        # Optimize route (with optional fixed end waypoint)
+        optimized_waypoints = route_optimizer.solve_tsp(
+            waypoints,
+            distance_matrix,
+            request.constraints,
+            end_waypoint_id=request.constraints.end_waypoint_id
+        )
+        
+        if not optimized_waypoints:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Route optimization failed - could not find valid route"
+            )
+        
+        # Update trip
+        trip.status = TripStatus.OPTIMIZED
+        trip.start_location_lat = request.constraints.start_location.lat
+        trip.start_location_lng = request.constraints.start_location.lng
+        trip.start_time = request.constraints.start_time
+        trip.end_time = request.constraints.end_time
+        trip.walking_speed = request.constraints.walking_speed
+        
+        # Calculate total time (stay + travel)
+        total_minutes = 0
+        for wp in optimized_waypoints:
+            if wp.arrival_time and wp.departure_time:
+                duration = (wp.departure_time - wp.arrival_time).total_seconds() / 60
+                total_minutes += duration
+        
+        trip.total_time_minutes = int(total_minutes)
+        db.commit()
+        
+        # Build response with transit info
+        optimized_data = []
+        route_segments = []
+        
+        for i, wp in enumerate(optimized_waypoints):
+            optimized_data.append({
+                "order": wp.order,
+                "name": wp.name,
+                "arrival_time": wp.arrival_time.strftime("%H:%M") if wp.arrival_time else "",
+                "departure_time": wp.departure_time.strftime("%H:%M") if wp.departure_time else "",
+                "lat": wp.lat,
+                "lng": wp.lng,
+                "google_place_id": wp.google_place_id,
+                "address": getattr(wp, 'address', None)
+            })
+            
+            # Add route segment between waypoints
+            if i < len(optimized_waypoints) - 1:
+                # Find matrix indices for this segment
+                from_idx = waypoints.index(wp) + 1  # +1 for start location
+                to_idx = waypoints.index(optimized_waypoints[i + 1]) + 1
+                
+                segment = {
+                    "from_order": wp.order,
+                    "to_order": optimized_waypoints[i + 1].order,
+                    "travel_mode": travel_mode,
+                    "duration_seconds": distance_matrix[from_idx][to_idx],
+                    "transit_steps": transit_details.get(f"{from_idx}-{to_idx}")
+                }
+                route_segments.append(segment)
+        
+        # Generate Google Maps URL
+        google_maps_url = maps_link_service.generate_link(optimized_waypoints)
+        
+        logger.info(f"Optimization complete: {len(optimized_waypoints)} waypoints, {total_minutes} min total")
+        
+        return OptimizationResponse(
+            trip_id=trip.id,
+            total_time_minutes=trip.total_time_minutes,
+            travel_mode=travel_mode,
+            waypoints=optimized_data,
+            route_segments=route_segments if transit_details else None,
+            google_maps_url=google_maps_url
+        )
+        
+    except Exception as e:
+        logger.error(f"Optimization failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Route optimization failed: {str(e)}"
+        )
 
 
 @router.get("/maps/link/{trip_id}", response_model=MapsLinkResponse)
