@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,15 @@ import {
   Alert,
   Linking,
   Platform,
+  Dimensions,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { apiService } from '../../services/api';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
+import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 
 type TimelineScreenProps = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Timeline'>;
@@ -51,6 +55,12 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
   const [travelMode, setTravelMode] = useState<string>('walking');
   const [isLoading, setIsLoading] = useState(true);
   const [selectedTransitStep, setSelectedTransitStep] = useState<TransitStep | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
+  const [mapRouteData, setMapRouteData] = useState<any>(null);
+
+  // Refs for capturing screenshots
+  const timelineRef = useRef<ScrollView>(null);
+  const mapRef = useRef<View>(null);
 
   useEffect(() => {
     loadTrip();
@@ -60,7 +70,7 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
     try {
       const response = await apiService.getTrip(tripId);
       setTrip(response);
-      
+
       // Try to get maps link
       try {
         const mapsData = await apiService.getMapsLink(tripId);
@@ -68,7 +78,7 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
       } catch (e) {
         console.log('Could not get maps link');
       }
-      
+
       // If there's optimization data stored, load route segments
       if (response.route_segments) {
         setRouteSegments(response.route_segments);
@@ -80,6 +90,94 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
       Alert.alert('Error', 'Could not load trip details');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // Load route polyline data for map capture
+  useEffect(() => {
+    const loadRouteData = async () => {
+      if (!tripId) return;
+      try {
+        const routeResponse = await apiService.getTripRoute(tripId);
+        if (routeResponse?.segments?.length > 0) {
+          setMapRouteData(routeResponse);
+        }
+      } catch (e) {
+        console.log('Could not load route data for sharing');
+      }
+    };
+    loadRouteData();
+  }, [tripId]);
+
+  // Share handler - captures timeline and map images
+  const handleShare = async () => {
+    if (!trip?.waypoints?.length) {
+      Alert.alert('Error', 'No itinerary to share');
+      return;
+    }
+
+    const sharingAvailable = await Sharing.isAvailableAsync();
+    if (!sharingAvailable) {
+      Alert.alert('Error', 'Sharing is not available on this device');
+      return;
+    }
+
+    setIsSharing(true);
+
+    try {
+      const imagesToShare: string[] = [];
+
+      // Capture timeline image
+      if (timelineRef.current) {
+        const timelineUri = await captureRef(timelineRef, {
+          format: 'png',
+          quality: 1,
+        });
+        imagesToShare.push(timelineUri);
+      }
+
+      // Capture map image
+      if (mapRef.current) {
+        const mapUri = await captureRef(mapRef, {
+          format: 'png',
+          quality: 1,
+        });
+        imagesToShare.push(mapUri);
+      }
+
+      // Share the first image (iOS share sheet doesn't support multiple images well)
+      // We share timeline first, then prompt for map
+      if (imagesToShare.length > 0) {
+        await Sharing.shareAsync(imagesToShare[0], {
+          mimeType: 'image/png',
+          dialogTitle: 'Share your itinerary',
+        });
+
+        // If we have a second image, offer to share it too
+        if (imagesToShare.length > 1) {
+          Alert.alert(
+            'Share Map',
+            'Would you like to also share the map view?',
+            [
+              { text: 'No', style: 'cancel' },
+              {
+                text: 'Yes',
+                onPress: async () => {
+                  await Sharing.shareAsync(imagesToShare[1], {
+                    mimeType: 'image/png',
+                    dialogTitle: 'Share route map',
+                  });
+                },
+              },
+            ]
+          );
+        }
+      }
+    } catch (error: any) {
+      console.error('Share error:', error);
+      Alert.alert('Error', 'Could not share itinerary');
+    } finally {
+      setIsSharing(false);
     }
   };
 
@@ -109,14 +207,14 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
         const waypoints = trip.waypoints;
         const origin = encodeURIComponent(getLocationString(waypoints[0]));
         const destination = encodeURIComponent(getLocationString(waypoints[waypoints.length - 1]));
-        
+
         let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=walking`;
-        
+
         if (waypoints.length > 2) {
           const middleWaypoints = waypoints.slice(1, -1).map((wp: any) => getLocationString(wp)).join('|');
           url += `&waypoints=${encodeURIComponent(middleWaypoints)}`;
         }
-        
+
         const supported = await Linking.canOpenURL(url);
         if (supported) {
           await Linking.openURL(url);
@@ -150,10 +248,10 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
 
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleTimeString('en-US', { 
-      hour: '2-digit', 
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
       minute: '2-digit',
-      hour12: false 
+      hour12: false
     });
   };
 
@@ -181,9 +279,9 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
             style={styles.transitStep}
             onPress={() => setSelectedTransitStep(step)}
           >
-            <View 
+            <View
               style={[
-                styles.transitLineIndicator, 
+                styles.transitLineIndicator,
                 { backgroundColor: step.line_color || '#4F46E5' }
               ]}
             />
@@ -196,8 +294,8 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
                 {step.line_name || step.type}
               </Text>
               <Text style={styles.transitStepDetail}>
-                {step.type === 'WALKING' 
-                  ? step.headsign 
+                {step.type === 'WALKING'
+                  ? step.headsign
                   : `${step.num_stops} stops • ${step.headsign}`
                 }
               </Text>
@@ -227,6 +325,25 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
     );
   }
 
+  // Calculate map region for embedded map
+  const coordinates = trip.waypoints.map((wp: any) => ({
+    latitude: wp.lat,
+    longitude: wp.lng,
+  }));
+  const latitudes = coordinates.map((c: any) => c.latitude);
+  const longitudes = coordinates.map((c: any) => c.longitude);
+  const minLat = Math.min(...latitudes);
+  const maxLat = Math.max(...latitudes);
+  const minLng = Math.min(...longitudes);
+  const maxLng = Math.max(...longitudes);
+  const mapRegion = {
+    latitude: (minLat + maxLat) / 2,
+    longitude: (minLng + maxLng) / 2,
+    latitudeDelta: (maxLat - minLat) * 1.5 || 0.05,
+    longitudeDelta: (maxLng - minLng) * 1.5 || 0.05,
+  };
+  const segmentColors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -243,11 +360,11 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
         </View>
       </View>
 
-      <ScrollView style={styles.timeline}>
+      <ScrollView ref={timelineRef} style={styles.timeline}>
         {trip.waypoints.map((waypoint: any, index: number) => {
           const segment = getRouteSegmentForWaypoint(waypoint.order);
           const hasTransit = segment?.transit_steps && segment.transit_steps.length > 0;
-          
+
           return (
             <View key={waypoint.id}>
               <View style={styles.timelineItem}>
@@ -262,7 +379,7 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
                   <Text style={styles.timelineTime}>
                     {formatTime(waypoint.arrival_time)} - {formatTime(waypoint.departure_time)}
                   </Text>
-                  
+
                   <View style={styles.activityCard}>
                     <Text style={styles.activityName}>{waypoint.name}</Text>
                     {waypoint.address && (
@@ -315,7 +432,7 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
 
       {/* Transit Step Detail Modal */}
       {selectedTransitStep && (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.modalOverlay}
           activeOpacity={1}
           onPress={() => setSelectedTransitStep(null)}
@@ -335,22 +452,22 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
             <View style={styles.transitDetailContent}>
               <Text style={styles.transitDetailLabel}>Direction</Text>
               <Text style={styles.transitDetailValue}>{selectedTransitStep.headsign}</Text>
-              
+
               <Text style={styles.transitDetailLabel}>From</Text>
               <Text style={styles.transitDetailValue}>{selectedTransitStep.departure_stop}</Text>
-              
+
               <Text style={styles.transitDetailLabel}>To</Text>
               <Text style={styles.transitDetailValue}>{selectedTransitStep.arrival_stop}</Text>
-              
+
               <Text style={styles.transitDetailLabel}>Stops</Text>
               <Text style={styles.transitDetailValue}>{selectedTransitStep.num_stops} stops</Text>
-              
+
               <Text style={styles.transitDetailLabel}>Duration</Text>
               <Text style={styles.transitDetailValue}>
                 {Math.round(selectedTransitStep.duration_seconds / 60)} minutes
               </Text>
             </View>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.closeDetailButton}
               onPress={() => setSelectedTransitStep(null)}
             >
@@ -369,10 +486,18 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
         </TouchableOpacity>
 
         <TouchableOpacity
+          style={[styles.button, styles.buttonShare]}
+          onPress={handleShare}
+          disabled={isSharing}
+        >
+          <Text style={styles.buttonShareText}>{isSharing ? '...' : '📤'}</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
           style={[styles.button, styles.buttonGoogleMaps]}
           onPress={openInGoogleMaps}
         >
-          <Text style={styles.buttonGoogleMapsText}>Open in Maps</Text>
+          <Text style={styles.buttonGoogleMapsText}>Maps</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -384,6 +509,87 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* Hidden MapView for screenshot capture */}
+      <View
+        ref={mapRef}
+        style={styles.hiddenMapContainer}
+        collapsable={false}
+      >
+        <View style={styles.hiddenMapHeader}>
+          <Text style={styles.hiddenMapTitle}>{trip.name}</Text>
+          <Text style={styles.hiddenMapSubtitle}>
+            {trip.waypoints.length} stops • {trip.total_time_minutes} min
+          </Text>
+        </View>
+        <MapView
+          provider={PROVIDER_GOOGLE}
+          style={styles.hiddenMap}
+          region={mapRegion}
+          scrollEnabled={false}
+          zoomEnabled={false}
+          rotateEnabled={false}
+          pitchEnabled={false}
+        >
+          {/* Render route polylines */}
+          {mapRouteData?.segments?.map((segment: any, index: number) => (
+            <Polyline
+              key={`route-${index}`}
+              coordinates={segment.polyline.map((point: any) => ({
+                latitude: point.lat,
+                longitude: point.lng,
+              }))}
+              strokeColor={segmentColors[index % segmentColors.length]}
+              strokeWidth={4}
+            />
+          ))}
+
+          {/* Fallback straight lines if no route data */}
+          {!mapRouteData && (
+            <Polyline
+              coordinates={coordinates}
+              strokeColor="#4F46E5"
+              strokeWidth={3}
+              lineDashPattern={[5, 5]}
+            />
+          )}
+
+          {/* Waypoint markers */}
+          {trip.waypoints.map((waypoint: any, index: number) => (
+            <Marker
+              key={waypoint.id}
+              coordinate={{
+                latitude: waypoint.lat,
+                longitude: waypoint.lng,
+              }}
+              title={waypoint.name}
+              pinColor={index === 0 ? 'green' : index === trip.waypoints.length - 1 ? 'red' : '#4F46E5'}
+            />
+          ))}
+        </MapView>
+        <View style={styles.hiddenMapLegend}>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: 'green' }]} />
+            <Text style={styles.legendText}>Start</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: '#4F46E5' }]} />
+            <Text style={styles.legendText}>Stops</Text>
+          </View>
+          <View style={styles.legendItem}>
+            <View style={[styles.legendDot, { backgroundColor: 'red' }]} />
+            <Text style={styles.legendText}>End</Text>
+          </View>
+        </View>
+      </View>
+
+      {/* Sharing loading overlay */}
+      {isSharing && (
+        <View style={styles.sharingOverlay}>
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={styles.sharingText}>Preparing to share...</Text>
+        </View>
+      )}
     </View>
   );
 };
@@ -670,5 +876,81 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#fff',
+  },
+  buttonShare: {
+    backgroundColor: '#8B5CF6',
+    flex: 0.5,
+  },
+  buttonShareText: {
+    fontSize: 18,
+  },
+  // Hidden map for screenshot capture
+  hiddenMapContainer: {
+    position: 'absolute',
+    left: -1000,
+    top: 0,
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height * 0.8,
+    backgroundColor: '#fff',
+  },
+  hiddenMapHeader: {
+    padding: 16,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  hiddenMapTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  hiddenMapSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  hiddenMap: {
+    flex: 1,
+    width: '100%',
+  },
+  hiddenMapLegend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    padding: 12,
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 12,
+  },
+  legendDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 6,
+  },
+  legendText: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  // Sharing overlay
+  sharingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sharingText: {
+    color: '#fff',
+    fontSize: 16,
+    marginTop: 16,
+    fontWeight: '600',
   },
 });

@@ -10,6 +10,7 @@ import {
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { apiService } from '../../services/api';
 
 type HomeScreenProps = {
     navigation: NativeStackNavigationProp<RootStackParamList, 'Home'>;
@@ -28,11 +29,19 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         Alert.alert('Coming Soon', 'Add Credits feature is coming soon!');
     };
 
+    const handleSignOut = async () => {
+        await apiService.clearToken();
+        navigation.replace('Login');
+    };
+
     return (
         <SafeAreaView style={styles.container}>
             <View style={styles.content}>
-                <Text style={styles.title}>Plan_A</Text>
-                <Text style={styles.tagline}>Created for Type A, Enjoyed by Everyone</Text>
+                <View style={styles.headerContainer}>
+                    <Text style={styles.title}>Plan_A</Text>
+                    <Text style={styles.tagline}>Created for Type A</Text>
+                    <Text style={styles.tagline}>Made for Everyone</Text>
+                </View>
 
                 <View style={styles.buttonContainer}>
                     <TouchableOpacity
@@ -58,6 +67,14 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                     >
                         <Text style={styles.buttonText}>Add Credits</Text>
                     </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={styles.signOutButton}
+                        onPress={handleSignOut}
+                        activeOpacity={0.8}
+                    >
+                        <Text style={styles.signOutButtonText}>Sign Out</Text>
+                    </TouchableOpacity>
                 </View>
             </View>
         </SafeAreaView>
@@ -74,20 +91,25 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         padding: 24,
+        paddingBottom: 100,
+    },
+    headerContainer: {
+        alignItems: 'center',
+        marginBottom: 80,
     },
     title: {
         fontSize: 56,
         fontWeight: 'bold',
         color: '#4F46E5',
         textAlign: 'center',
-        marginBottom: 12,
+        marginBottom: 16,
     },
     tagline: {
         fontSize: 16,
         color: '#6B7280',
         textAlign: 'center',
         fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-        marginBottom: 64,
+        lineHeight: 24,
     },
     buttonContainer: {
         width: '100%',
@@ -109,5 +131,18 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 18,
         fontWeight: '600',
+    },
+    signOutButton: {
+        backgroundColor: 'transparent',
+        borderRadius: 50,
+        paddingVertical: 18,
+        paddingHorizontal: 32,
+        alignItems: 'center',
+        marginTop: 8,
+    },
+    signOutButtonText: {
+        color: '#EF4444',
+        fontSize: 16,
+        fontWeight: '500',
     },
 });

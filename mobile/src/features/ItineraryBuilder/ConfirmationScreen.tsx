@@ -1493,7 +1493,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#fff',
   },
+  saveEditButtonInline: {
+    marginLeft: 12,
+    backgroundColor: '#4F46E5',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  saveEditButtonInlineText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
   // Alternatives modal
+
 
   alternativesModal: {
     backgroundColor: '#fff',

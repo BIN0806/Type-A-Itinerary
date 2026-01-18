@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,8 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { apiService } from '../../services/api';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
 
 type MapViewScreenProps = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'MapView'>;
@@ -46,6 +48,10 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
   const [routeData, setRouteData] = useState<RouteData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState<RouteSegment | null>(null);
+  const [isSharing, setIsSharing] = useState(false);
+
+  // Ref for map capture
+  const mapContainerRef = useRef<View>(null);
 
   useEffect(() => {
     loadTrip();
@@ -55,7 +61,7 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
     try {
       const tripResponse = await apiService.getTrip(tripId);
       setTrip(tripResponse);
-      
+
       // Try to get route data
       try {
         console.log('🗺️ Fetching route polylines for trip:', tripId);
@@ -80,7 +86,7 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
       setIsLoading(false);
     }
   };
-  
+
   const formatDuration = (seconds: number): string => {
     if (seconds < 60) return `${seconds}s`;
     const minutes = Math.round(seconds / 60);
@@ -89,10 +95,40 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
     const remainingMins = minutes % 60;
     return `${hours}h ${remainingMins}m`;
   };
-  
+
   const formatDistance = (meters: number): string => {
     if (meters < 1000) return `${Math.round(meters)}m`;
     return `${(meters / 1000).toFixed(1)}km`;
+  };
+
+  // Share handler - captures the map view
+  const handleShare = async () => {
+    const sharingAvailable = await Sharing.isAvailableAsync();
+    if (!sharingAvailable) {
+      Alert.alert('Error', 'Sharing is not available on this device');
+      return;
+    }
+
+    setIsSharing(true);
+
+    try {
+      if (mapContainerRef.current) {
+        const uri = await captureRef(mapContainerRef, {
+          format: 'png',
+          quality: 1,
+        });
+
+        await Sharing.shareAsync(uri, {
+          mimeType: 'image/png',
+          dialogTitle: 'Share route map',
+        });
+      }
+    } catch (error: any) {
+      console.error('Share error:', error);
+      Alert.alert('Error', 'Could not share map');
+    } finally {
+      setIsSharing(false);
+    }
   };
 
   if (isLoading) {
@@ -136,7 +172,7 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
   const segmentColors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} ref={mapContainerRef} collapsable={false}>
       <MapView
         provider={PROVIDER_GOOGLE}
         style={styles.map}
@@ -156,7 +192,7 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
             onPress={() => setSelectedSegment(segment)}
           />
         ))}
-        
+
         {/* Fallback to straight lines if no route data */}
         {!routeData && (
           <Polyline
@@ -193,7 +229,7 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
 
       {/* Selected segment info */}
       {selectedSegment && (
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.segmentInfo}
           onPress={() => setSelectedSegment(null)}
         >
@@ -227,6 +263,23 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
           </View>
         )}
       </View>
+
+      {/* Share floating button */}
+      <TouchableOpacity
+        style={styles.shareButton}
+        onPress={handleShare}
+        disabled={isSharing}
+      >
+        <Text style={styles.shareButtonText}>{isSharing ? '...' : '📤'}</Text>
+      </TouchableOpacity>
+
+      {/* Sharing loading overlay */}
+      {isSharing && (
+        <View style={styles.sharingOverlay}>
+          <ActivityIndicator size="large" color="#fff" />
+          <Text style={styles.sharingText}>Preparing to share...</Text>
+        </View>
+      )}
     </View>
   );
 };
@@ -341,5 +394,40 @@ const styles = StyleSheet.create({
     color: '#C7D2FE',
     marginTop: 8,
     fontStyle: 'italic',
+  },
+  shareButton: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    backgroundColor: '#8B5CF6',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  shareButtonText: {
+    fontSize: 24,
+  },
+  sharingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sharingText: {
+    color: '#fff',
+    fontSize: 16,
+    marginTop: 16,
+    fontWeight: '600',
   },
 });
