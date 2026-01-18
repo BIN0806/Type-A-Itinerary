@@ -95,16 +95,24 @@ async def process_images_background(job_id: UUID, image_bytes_list: List[bytes],
         job.progress = 0.7
         db.commit()
         
-        # === PHASE 3: Parallel Geocoding with Alternatives (30% of progress) ===
+        # === PHASE 3: Parallel Geocoding with Proximity Re-ranking (30% of progress) ===
+        # Two-pass approach:
+        # 1. Geocode all candidates (without bias for first pass)
+        # 2. Compute centroid from results and re-rank alternatives by proximity
+        
+        from ..utils.geo_utils import calculate_centroid, calculate_bounding_radius, score_by_proximity
+        
         remaining_time = PROCESSING_TIMEOUT - (time.time() - start_time)
         if remaining_time < 5:
             logger.warning("Low time budget for geocoding, limiting candidates")
             filtered_candidates = filtered_candidates[:3]  # Limit to top 3
         
         all_candidates = []
+        geocode_results = []
         
         if filtered_candidates:
             try:
+                # First pass: geocode without location bias
                 geocode_results = await asyncio.wait_for(
                     geocoding_service.geocode_batch_async(
                         filtered_candidates,
@@ -113,9 +121,59 @@ async def process_images_background(job_id: UUID, image_bytes_list: List[bytes],
                     timeout=min(remaining_time - 2, 12.0)  # Leave 2s buffer
                 )
                 
+                # Collect coordinates from primary results for centroid calculation
+                primary_coords = []
                 for result in geocode_results:
                     primary = result.get("primary")
+                    if primary and primary.get("lat") is not None:
+                        primary_coords.append((primary["lat"], primary["lng"]))
+                
+                # Compute centroid of geocoded locations
+                centroid = calculate_centroid(primary_coords)
+                bounding_radius = calculate_bounding_radius(primary_coords, centroid)
+                
+                logger.info(f"Computed cluster centroid: {centroid}, radius: {bounding_radius/1000:.1f}km from {len(primary_coords)} locations")
+                
+                # Second pass: re-rank alternatives by proximity to centroid
+                for result in geocode_results:
+                    primary = result.get("primary")
+                    alternatives = result.get("alternatives", [])
+                    
                     if primary:
+                        # If we have a valid centroid and alternatives, re-rank
+                        if centroid[0] is not None and alternatives:
+                            all_options = [primary] + alternatives
+                            
+                            # Score each option by proximity
+                            scored_options = []
+                            for i, opt in enumerate(all_options):
+                                opt_lat = opt.get("lat")
+                                opt_lng = opt.get("lng")
+                                
+                                if opt_lat is not None and opt_lng is not None:
+                                    prox_score = score_by_proximity(opt_lat, opt_lng, centroid, bounding_radius * 2)
+                                else:
+                                    prox_score = 0.5
+                                
+                                # Combine with API rank (first result gets bonus)
+                                api_bonus = max(0.0, 0.15 - (i * 0.03))
+                                combined = prox_score + api_bonus
+                                scored_options.append((combined, opt))
+                            
+                            # Sort by combined score
+                            scored_options.sort(key=lambda x: x[0], reverse=True)
+                            
+                            # Use highest-scored as primary
+                            best_primary = scored_options[0][1]
+                            new_alternatives = [opt for _, opt in scored_options[1:]]
+                            
+                            # Log if we swapped the primary
+                            if best_primary.get("name") != primary.get("name"):
+                                logger.info(f"Proximity re-rank: swapped '{primary.get('name')}' → '{best_primary.get('name')}' (closer to cluster)")
+                            
+                            primary = best_primary
+                            alternatives = new_alternatives
+                        
                         all_candidates.append({
                             "name": primary["name"],
                             "description": primary.get("description"),
@@ -126,9 +184,9 @@ async def process_images_background(job_id: UUID, image_bytes_list: List[bytes],
                             "address": primary.get("address"),
                             "rating": primary.get("rating"),
                             "opening_hours": primary.get("opening_hours"),
-                            "photo_url": primary.get("photo_url"),  # Include restaurant photo!
+                            "photo_url": primary.get("photo_url"),
                             # Include alternatives for disambiguation
-                            "alternatives": result.get("alternatives", []),
+                            "alternatives": alternatives,
                             "original_query": result.get("original_query")
                         })
                 

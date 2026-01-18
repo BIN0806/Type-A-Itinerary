@@ -3,7 +3,7 @@ import asyncio
 import logging
 import hashlib
 import json
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import googlemaps
 from googlemaps.exceptions import ApiError
 import concurrent.futures
@@ -11,6 +11,7 @@ import concurrent.futures
 from ..core.config import settings
 from ..core.redis_client import get_redis
 from ..models.schemas import CandidateLocation
+from ..utils.geo_utils import haversine_distance
 
 logger = logging.getLogger(__name__)
 
@@ -123,13 +124,17 @@ class GeocodingService:
     
     def geocode_with_alternatives(
         self, 
-        location: CandidateLocation
+        location: CandidateLocation,
+        location_bias: Optional[Tuple[float, float]] = None,
+        bias_radius_meters: float = 50000.0
     ) -> Dict[str, Any]:
         """
         Geocode a location and return top 5 alternatives for user selection.
         
         Args:
             location: Candidate location with at least a name
+            location_bias: Optional (lat, lng) tuple to bias results toward
+            bias_radius_meters: Radius in meters for bias (default 50km)
             
         Returns:
             Dict with 'primary' (best match) and 'alternatives' (list of up to 4 more)
@@ -146,10 +151,18 @@ class GeocodingService:
         except Exception as e:
             logger.warning(f"Redis cache read error: {e}")
         
-        # Call Google Places Text Search
+        # Call Google Places Text Search with optional location bias
         try:
-            logger.info(f"Geocoding with alternatives: {query}")
-            results = self.client.places(query=query)
+            logger.info(f"Geocoding with alternatives: {query}" + (f" (biased to {location_bias})" if location_bias else ""))
+            
+            # Build API parameters with optional location bias
+            places_kwargs = {"query": query}
+            if location_bias and location_bias[0] is not None:
+                # Google Places API uses location + radius for biasing
+                places_kwargs["location"] = location_bias
+                places_kwargs["radius"] = int(bias_radius_meters)
+            
+            results = self.client.places(**places_kwargs)
             
             if not results.get("results"):
                 logger.warning(f"No results found for: {query}")
@@ -188,6 +201,13 @@ class GeocodingService:
                 else:
                     alternatives.append(place_data)
             
+            # Re-rank by proximity if bias is provided
+            if location_bias and location_bias[0] is not None and (primary or alternatives):
+                all_candidates = [primary] + alternatives if primary else alternatives
+                all_candidates = self._rerank_by_proximity(all_candidates, location_bias)
+                primary = all_candidates[0] if all_candidates else None
+                alternatives = all_candidates[1:] if len(all_candidates) > 1 else []
+            
             result = {
                 "primary": primary,
                 "alternatives": alternatives,
@@ -216,7 +236,9 @@ class GeocodingService:
     async def geocode_batch_async(
         self, 
         locations: List[CandidateLocation],
-        with_alternatives: bool = True
+        with_alternatives: bool = True,
+        location_bias: Optional[Tuple[float, float]] = None,
+        bias_radius_meters: float = 50000.0
     ) -> List[Dict[str, Any]]:
         """
         Geocode multiple locations in parallel with alternatives.
@@ -224,6 +246,8 @@ class GeocodingService:
         Args:
             locations: List of candidate locations
             with_alternatives: Whether to include alternatives for each
+            location_bias: Optional (lat, lng) tuple to bias results toward
+            bias_radius_meters: Radius in meters for bias (default 50km)
             
         Returns:
             List of geocoding results with alternatives
@@ -234,11 +258,16 @@ class GeocodingService:
         
         # Run geocoding in thread pool (Google Maps client is sync)
         if with_alternatives:
+            from functools import partial
             futures = [
                 loop.run_in_executor(
                     _geocode_executor,
-                    self.geocode_with_alternatives,
-                    loc
+                    partial(
+                        self.geocode_with_alternatives,
+                        loc,
+                        location_bias=location_bias,
+                        bias_radius_meters=bias_radius_meters
+                    )
                 )
                 for loc in locations
             ]
@@ -287,6 +316,55 @@ class GeocodingService:
             f"&photo_reference={photo_reference}"
             f"&key={settings.GOOGLE_MAPS_API_KEY}"
         )
+    
+    def _rerank_by_proximity(
+        self,
+        candidates: List[Dict[str, Any]],
+        centroid: Tuple[float, float],
+        max_distance: float = 100000.0  # 100km
+    ) -> List[Dict[str, Any]]:
+        """
+        Re-rank candidates by proximity to centroid.
+        
+        Combines API ranking with proximity score to prefer nearby locations.
+        
+        Args:
+            candidates: List of candidate dicts with lat/lng
+            centroid: (lat, lng) tuple for center point
+            max_distance: Maximum distance for scoring (default 100km)
+            
+        Returns:
+            Candidates sorted by combined score
+        """
+        if not candidates or centroid[0] is None:
+            return candidates
+        
+        scored = []
+        for i, candidate in enumerate(candidates):
+            lat = candidate.get("lat")
+            lng = candidate.get("lng")
+            
+            if lat is None or lng is None:
+                # No coordinates, use original position as score
+                proximity_score = 0.5
+            else:
+                distance = haversine_distance(centroid[0], centroid[1], lat, lng)
+                # Linear decay: 1.0 at centroid, 0.0 at max_distance
+                proximity_score = max(0.0, 1.0 - (distance / max_distance))
+            
+            # Combine API ranking (position) with proximity
+            # API rank bonus: first result gets 0.2, second 0.15, etc.
+            api_rank_bonus = max(0.0, 0.2 - (i * 0.05))
+            combined_score = proximity_score + api_rank_bonus
+            
+            scored.append((combined_score, candidate))
+        
+        # Sort by combined score descending
+        scored.sort(key=lambda x: x[0], reverse=True)
+        
+        logger.debug(f"Re-ranked candidates by proximity: {[(s, c.get('name')) for s, c in scored]}")
+        
+        return [candidate for _, candidate in scored]
     
     def geocode_batch(self, locations: List[CandidateLocation]) -> List[CandidateLocation]:
         """

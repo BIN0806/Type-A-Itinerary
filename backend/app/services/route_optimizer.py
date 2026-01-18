@@ -113,6 +113,12 @@ class RouteOptimizer:
         for i, wp in enumerate(waypoints):
             index = manager.NodeToIndex(i + 1)  # +1 because 0 is start location
             
+            # Skip if this is the end waypoint in fixed-end mode
+            # NodeToIndex returns -1 for the end node in this configuration
+            if index < 0:
+                logger.debug(f"Skipping end waypoint {wp.name} (NodeToIndex returned -1)")
+                continue
+            
             # For simplicity, allow visiting anytime during the day
             # In production, this would check opening_hours
             time_dimension.CumulVar(index).SetRange(0, total_available_seconds)
@@ -121,6 +127,7 @@ class RouteOptimizer:
             stay_minutes = wp.estimated_stay_duration or 60
             stay_seconds = stay_minutes * 60
             time_dimension.SlackVar(index).SetRange(stay_seconds, stay_seconds)
+
         
         # Set search parameters for better optimization
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
