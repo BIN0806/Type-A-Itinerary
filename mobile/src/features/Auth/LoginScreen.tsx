@@ -32,7 +32,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     setIsLoading(true);
     try {
       await apiService.login(email, password);
-      navigation.replace('Upload');
+      navigation.replace('Home');
     } catch (error: any) {
       Alert.alert(
         'Login Failed',

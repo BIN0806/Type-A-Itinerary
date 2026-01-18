@@ -104,34 +104,35 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
   route,
 }) => {
   const { jobId } = route.params;
-  
+
   // Core state
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [screenState, setScreenState] = useState<ScreenState>('loading');
   const [currentIndex, setCurrentIndex] = useState(0);
-  
+
   // Confirmed/Skipped tracking
   const [confirmed, setConfirmed] = useState<ConfirmedLocation[]>([]);
   const [skipped, setSkipped] = useState<number[]>([]);
-  
+
   // Processing feedback
   const [failedImages, setFailedImages] = useState<FailedImage[]>([]);
   const [duplicatesMerged, setDuplicatesMerged] = useState<DuplicateMerge[]>([]);
   const [processingStats, setProcessingStats] = useState<ProcessingStats | null>(null);
-  
+
   // Edit modal state
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [isAddingNew, setIsAddingNew] = useState(false); // For adding new locations manually
   const [searchQuery, setSearchQuery] = useState('');
   const [cityStateQuery, setCityStateQuery] = useState(''); // City/State filter
+  const [stayDurationInput, setStayDurationInput] = useState('60'); // Stay duration in minutes
   const [searchSuggestions, setSearchSuggestions] = useState<SearchSuggestion[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  
+
   // Alternatives modal state
   const [showAlternatives, setShowAlternatives] = useState(false);
   const [selectedCardIndex, setSelectedCardIndex] = useState<number | null>(null);
   const [pendingAlternative, setPendingAlternative] = useState<Alternative | null>(null);
-  
+
   // Refs for cleanup and state tracking
   const swiperRef = useRef<any>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -157,14 +158,14 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
     pollIntervalRef.current = setInterval(async () => {
       try {
         const statusResponse = await apiService.getJobStatus(jobId);
-        
+
         if (statusResponse.status === 'completed') {
           isPollingComplete.current = true;
           if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-          
+
           const candidatesResponse = await apiService.getCandidates(jobId);
           setCandidates(candidatesResponse.candidates || []);
-          
+
           // Capture failed images, duplicates, and stats for user feedback
           if (candidatesResponse.failed_images) {
             setFailedImages(candidatesResponse.failed_images);
@@ -175,7 +176,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
           if (candidatesResponse.stats) {
             setProcessingStats(candidatesResponse.stats);
           }
-          
+
           // Notify user about duplicates
           if (candidatesResponse.duplicates_merged?.length > 0) {
             const dupNames = candidatesResponse.duplicates_merged
@@ -187,7 +188,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
               [{ text: 'OK' }]
             );
           }
-          
+
           setScreenState('swiping');
         } else if (statusResponse.status === 'failed') {
           isPollingComplete.current = true;
@@ -239,7 +240,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
   const handleSwiped = useCallback((index: number) => {
     const newIndex = index + 1;
     setCurrentIndex(newIndex);
-    
+
     // Check if all cards have been swiped
     if (newIndex >= candidates.length) {
       setScreenState('summary');
@@ -295,10 +296,10 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
   // Calculate itinerary centroid for proximity-based search
   const getItineraryCentroid = useCallback((): { lat: number; lng: number } | null => {
     if (confirmed.length === 0) return null;
-    
+
     const sumLat = confirmed.reduce((sum, loc) => sum + loc.lat, 0);
     const sumLng = confirmed.reduce((sum, loc) => sum + loc.lng, 0);
-    
+
     return {
       lat: sumLat / confirmed.length,
       lng: sumLng / confirmed.length
@@ -311,6 +312,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
     setIsAddingNew(false);
     setSearchQuery(confirmed[index].name);
     setCityStateQuery('');
+    setStayDurationInput(String(confirmed[index].estimated_stay_duration || 60));
     setSearchSuggestions([]);
   }, [confirmed]);
 
@@ -320,33 +322,34 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
     setIsAddingNew(true);
     setSearchQuery('');
     setCityStateQuery('');
+    setStayDurationInput('60');
     setSearchSuggestions([]);
   }, []);
 
   // Search for places (with debounce) - uses itinerary centroid for proximity
   const handleSearchChange = useCallback((text: string) => {
     setSearchQuery(text);
-    
+
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
     }
-    
+
     if (text.length < 2) {
       setSearchSuggestions([]);
       return;
     }
-    
+
     searchDebounceRef.current = setTimeout(async () => {
       setIsSearching(true);
       try {
         // Use itinerary centroid for proximity search (not device location)
         const locationContext = getItineraryCentroid();
-        
+
         // Build search query with city/state if provided
-        const fullQuery = cityStateQuery.trim() 
+        const fullQuery = cityStateQuery.trim()
           ? `${text} ${cityStateQuery.trim()}`
           : text;
-        
+
         const response = await apiService.searchPlaces(fullQuery, locationContext);
         setSearchSuggestions(response.results || []);
       } catch (error) {
@@ -369,7 +372,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         setIsSearching(true);
         try {
           const locationContext = getItineraryCentroid();
-          const fullQuery = text.trim() 
+          const fullQuery = text.trim()
             ? `${searchQuery} ${text.trim()}`
             : searchQuery;
           const response = await apiService.searchPlaces(fullQuery, locationContext);
@@ -385,6 +388,8 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
 
   // Select a search suggestion (for both edit and add new)
   const handleSelectSuggestion = useCallback((suggestion: SearchSuggestion) => {
+    const parsedDuration = parseInt(stayDurationInput, 10) || 60;
+
     if (editingIndex !== null) {
       // Editing existing location
       const updatedConfirmed = [...confirmed];
@@ -397,6 +402,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         lng: suggestion.lng || updatedConfirmed[editingIndex].lng,
         rating: suggestion.rating,
         photo_url: suggestion.photo_url,
+        estimated_stay_duration: parsedDuration,
       };
       setConfirmed(updatedConfirmed);
     } else if (isAddingNew) {
@@ -409,7 +415,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         lng: suggestion.lng || 0,
         rating: suggestion.rating,
         photo_url: suggestion.photo_url,
-        estimated_stay_duration: 60,
+        estimated_stay_duration: parsedDuration,
       };
       setConfirmed(prev => [...prev, newLocation]);
     }
@@ -417,8 +423,9 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
     setIsAddingNew(false);
     setSearchQuery('');
     setCityStateQuery('');
+    setStayDurationInput('60');
     setSearchSuggestions([]);
-  }, [editingIndex, isAddingNew, confirmed]);
+  }, [editingIndex, isAddingNew, confirmed, stayDurationInput]);
 
   // Remove a confirmed location
   const handleRemoveLocation = useCallback((index: number) => {
@@ -453,7 +460,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         lng: loc.lng,
         estimated_stay_duration: loc.estimated_stay_duration,
       }));
-      
+
       const response = await apiService.confirmWaypoints(jobId, waypoints, 'My Trip');
       navigation.navigate('Constraints', { tripId: response.id });
     } catch (error: any) {
@@ -487,7 +494,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         <Text style={styles.emptySubtext}>
           We couldn't identify any locations in your photos
         </Text>
-        
+
         {/* Show why images failed */}
         {failedImages.length > 0 && (
           <View style={styles.failedImagesContainer}>
@@ -504,21 +511,21 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
             )}
           </View>
         )}
-        
+
         <View style={styles.tipsContainer}>
           <Text style={styles.tipsTitle}>Tips for better results:</Text>
           <Text style={styles.tipText}>• Include photos with visible restaurant/place names</Text>
           <Text style={styles.tipText}>• Screenshots with location pins work best</Text>
           <Text style={styles.tipText}>• Avoid photos that only show food without context</Text>
         </View>
-        
+
         {/* Manual entry option */}
         <View style={styles.manualEntryPrompt}>
           <Text style={styles.manualEntryText}>
             Know where you want to go? Add locations manually:
           </Text>
-          <TouchableOpacity 
-            style={styles.manualEntryButton} 
+          <TouchableOpacity
+            style={styles.manualEntryButton}
             onPress={() => {
               setScreenState('summary');
               handleAddNewLocation();
@@ -527,7 +534,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
             <Text style={styles.manualEntryButtonText}>Add Locations Manually</Text>
           </TouchableOpacity>
         </View>
-        
+
         <TouchableOpacity style={styles.secondaryButton} onPress={() => navigation.goBack()}>
           <Text style={styles.secondaryButtonText}>Upload Different Photos</Text>
         </TouchableOpacity>
@@ -550,8 +557,8 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
 
         <ScrollView style={styles.summaryList} showsVerticalScrollIndicator={false}>
           {confirmed.map((location, index) => (
-            <View 
-              key={`${location.google_place_id}-${index}`} 
+            <View
+              key={`${location.google_place_id}-${index}`}
               style={styles.summaryCard}
               testID={`summary-location-${index}`}
             >
@@ -572,6 +579,9 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
                 {location.rating && (
                   <Text style={styles.summaryCardRating}>★ {location.rating.toFixed(1)}</Text>
                 )}
+                <Text style={styles.summaryCardDuration} testID={`stay-duration-${index}`}>
+                  ⏱ {location.estimated_stay_duration || 60} min stay
+                </Text>
                 <View style={styles.summaryCardActions}>
                   <TouchableOpacity
                     style={styles.editLocationButton}
@@ -591,7 +601,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
               </View>
             </View>
           ))}
-          
+
           {/* Add Location Button */}
           <TouchableOpacity
             style={styles.addLocationCard}
@@ -606,7 +616,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
               </View>
             </View>
           </TouchableOpacity>
-          
+
           {confirmed.length === 0 && (
             <View style={styles.noLocationsMessage}>
               <Text style={styles.noLocationsText}>No locations confirmed yet</Text>
@@ -638,16 +648,34 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
               keyboardVerticalOffset={Platform.OS === 'ios' ? 40 : 0}
             >
               <View style={styles.editModal}>
-                <Text style={styles.editModalTitle}>
-                  {isAddingNew ? 'Add Location' : 'Edit Location'}
-                </Text>
+                {/* Header with X close button */}
+                <View style={styles.editModalHeader}>
+                  <TouchableOpacity
+                    style={styles.editModalCloseX}
+                    onPress={() => {
+                      setEditingIndex(null);
+                      setIsAddingNew(false);
+                      setSearchQuery('');
+                      setCityStateQuery('');
+                      setStayDurationInput('60');
+                      setSearchSuggestions([]);
+                    }}
+                    testID="edit-modal-close"
+                  >
+                    <Text style={styles.editModalCloseXText}>×</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.editModalTitle}>
+                    {isAddingNew ? 'Add Location' : 'Edit Location'}
+                  </Text>
+                  <View style={styles.editModalHeaderSpacer} />
+                </View>
                 <Text style={styles.editModalSubtitle}>
-                  {isAddingNew 
+                  {isAddingNew
                     ? 'Search for a place to add to your trip'
-                    : 'Search for the correct location'
+                    : 'Update location or adjust stay duration'
                   }
                 </Text>
-                
+
                 {/* Place name search */}
                 <TextInput
                   style={styles.searchInput}
@@ -658,7 +686,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
                   testID="location-search-input"
                   returnKeyType="search"
                 />
-                
+
                 {/* City/State input for narrowing search */}
                 <TextInput
                   style={styles.cityStateInput}
@@ -668,18 +696,61 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
                   testID="city-state-input"
                   returnKeyType="search"
                 />
-                
+
+                {/* Stay Duration input with inline Save */}
+                <View style={styles.durationInputRow}>
+                  <Text style={styles.durationInputLabel}>Stay Duration:</Text>
+                  <TextInput
+                    style={styles.durationInput}
+                    value={stayDurationInput}
+                    onChangeText={setStayDurationInput}
+                    keyboardType="number-pad"
+                    placeholder="60"
+                    testID="stay-duration-input"
+                    maxLength={3}
+                  />
+                  <Text style={styles.durationInputUnit}>min</Text>
+
+                  {/* Inline Save button */}
+                  {!isAddingNew && (
+                    <TouchableOpacity
+                      style={styles.saveEditButtonInline}
+                      onPress={() => {
+                        // Save duration changes without changing location
+                        if (editingIndex !== null) {
+                          const parsedDuration = parseInt(stayDurationInput, 10) || 60;
+                          const updatedConfirmed = [...confirmed];
+                          updatedConfirmed[editingIndex] = {
+                            ...updatedConfirmed[editingIndex],
+                            estimated_stay_duration: parsedDuration,
+                          };
+                          setConfirmed(updatedConfirmed);
+                        }
+                        setEditingIndex(null);
+                        setIsAddingNew(false);
+                        setSearchQuery('');
+                        setCityStateQuery('');
+                        setStayDurationInput('60');
+                        setSearchSuggestions([]);
+                      }}
+                      testID="save-location-button"
+                    >
+                      <Text style={styles.saveEditButtonInlineText}>Save</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
                 {/* Proximity hint */}
                 {confirmed.length > 0 && (
                   <Text style={styles.proximityHint}>
                     Results are prioritized near your other stops
                   </Text>
                 )}
-                
+
                 {isSearching && (
                   <ActivityIndicator size="small" color="#4F46E5" style={styles.searchSpinner} />
                 )}
-                
+
                 <FlatList
                   data={searchSuggestions}
                   keyExtractor={(item) => item.place_id}
@@ -710,19 +781,6 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
                     )
                   }
                 />
-                
-                <TouchableOpacity
-                  style={styles.cancelEditButton}
-                  onPress={() => {
-                    setEditingIndex(null);
-                    setIsAddingNew(false);
-                    setSearchQuery('');
-                    setCityStateQuery('');
-                    setSearchSuggestions([]);
-                  }}
-                >
-                  <Text style={styles.cancelEditButtonText}>Cancel</Text>
-                </TouchableOpacity>
               </View>
             </KeyboardAvoidingView>
           </View>
@@ -743,7 +801,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
       <View style={styles.header}>
         <Text style={styles.title}>Confirm Locations</Text>
         <Text style={styles.subtitle}>Swipe right to confirm, left to skip</Text>
-        
+
         {/* Show processing stats if some images failed or duplicates found */}
         {(failedImages.length > 0 || duplicatesMerged.length > 0) && (
           <View style={styles.processingFeedback}>
@@ -753,7 +811,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
             </Text>
           </View>
         )}
-        
+
         <View style={styles.counterRow}>
           <Text style={styles.counter} testID="swipe-counter">
             {`${swipedCount}/${totalCount}`}
@@ -771,10 +829,10 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         testID="swiper-container"
         {...(process.env.NODE_ENV === 'test'
           ? ({
-              onSwiped: handleSwiped,
-              onSwipedLeft: handleSwipeLeft,
-              onSwipedRight: handleSwipeRight,
-            } as any)
+            onSwiped: handleSwiped,
+            onSwipedLeft: handleSwipeLeft,
+            onSwipedRight: handleSwipeRight,
+          } as any)
           : {})}
       >
         <Swiper
@@ -793,7 +851,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
                   />
                 </View>
               )}
-              
+
               <View style={styles.cardContent}>
                 <Text style={styles.cardName}>{card.name}</Text>
                 {card.address && (
@@ -812,7 +870,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
                     {card.description}
                   </Text>
                 )}
-                
+
                 {/* Alternatives indicator */}
                 {card.alternatives && card.alternatives.length > 0 && (
                   <TouchableOpacity
@@ -969,7 +1027,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
                   style={[
                     styles.alternativeItem,
                     pendingAlternative?.google_place_id === item.google_place_id &&
-                      styles.alternativeItemSelected,
+                    styles.alternativeItemSelected,
                   ]}
                   onPress={() => setPendingAlternative(item)}
                 >
@@ -1341,16 +1399,41 @@ const styles = StyleSheet.create({
     padding: 20,
     maxHeight: SCREEN_HEIGHT * 0.7,
   },
+  // Edit modal header
+  editModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  editModalCloseX: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editModalCloseXText: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#111827',
+    lineHeight: 24,
+  },
+  editModalHeaderSpacer: {
+    width: 36,
+  },
   editModalTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#111827',
-    marginBottom: 4,
+    textAlign: 'center',
   },
   editModalSubtitle: {
     fontSize: 14,
     color: '#6B7280',
     marginBottom: 16,
+    textAlign: 'center',
   },
   searchInput: {
     borderWidth: 1,
@@ -1398,7 +1481,20 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#4B5563',
   },
+  saveEditButton: {
+    marginTop: 12,
+    padding: 14,
+    backgroundColor: '#4F46E5',
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  saveEditButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
+  },
   // Alternatives modal
+
   alternativesModal: {
     backgroundColor: '#fff',
     borderRadius: 16,
@@ -1685,5 +1781,41 @@ const styles = StyleSheet.create({
   keyboardAvoidingModal: {
     width: '90%',
     maxHeight: '85%',
+  },
+  // Stay duration input styles
+  durationInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    paddingHorizontal: 4,
+  },
+  durationInputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginRight: 12,
+  },
+  durationInput: {
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    fontSize: 16,
+    fontWeight: '600',
+    width: 70,
+    textAlign: 'center',
+    backgroundColor: '#fff',
+  },
+  durationInputUnit: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginLeft: 8,
+  },
+  summaryCardDuration: {
+    fontSize: 13,
+    color: '#4F46E5',
+    fontWeight: '500',
+    marginTop: 4,
   },
 });

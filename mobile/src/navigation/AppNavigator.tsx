@@ -9,10 +9,12 @@ import { MapViewScreen } from '../features/MapView/MapViewScreen';
 import { NavigationScreen } from '../features/MapView/NavigationScreen';
 import { LoginScreen } from '../features/Auth/LoginScreen';
 import { RegisterScreen } from '../features/Auth/RegisterScreen';
+import { HomeScreen } from '../features/Home/HomeScreen';
 
 export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
+  Home: undefined;
   Upload: undefined;
   Confirmation: { jobId: string };
   Constraints: { tripId: string };
@@ -38,43 +40,48 @@ export const AppNavigator = () => {
           },
         }}
       >
-        <Stack.Screen 
-          name="Login" 
-          component={LoginScreen} 
+        <Stack.Screen
+          name="Login"
+          component={LoginScreen}
           options={{ headerShown: false }}
         />
-        <Stack.Screen 
-          name="Register" 
-          component={RegisterScreen} 
+        <Stack.Screen
+          name="Register"
+          component={RegisterScreen}
           options={{ headerShown: false }}
         />
-        <Stack.Screen 
-          name="Upload" 
+        <Stack.Screen
+          name="Home"
+          component={HomeScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Upload"
           component={UploadScreen}
           options={{ title: 'Upload Photos' }}
         />
-        <Stack.Screen 
-          name="Confirmation" 
+        <Stack.Screen
+          name="Confirmation"
           component={ConfirmationScreen}
           options={{ title: 'Confirm Locations' }}
         />
-        <Stack.Screen 
-          name="Constraints" 
+        <Stack.Screen
+          name="Constraints"
           component={ConstraintsScreen}
           options={{ title: 'Trip Details' }}
         />
-        <Stack.Screen 
-          name="Timeline" 
+        <Stack.Screen
+          name="Timeline"
           component={TimelineScreen}
           options={{ title: 'Your Itinerary' }}
         />
-        <Stack.Screen 
-          name="MapView" 
+        <Stack.Screen
+          name="MapView"
           component={MapViewScreen}
           options={{ title: 'Map View' }}
         />
-        <Stack.Screen 
-          name="Navigation" 
+        <Stack.Screen
+          name="Navigation"
           component={NavigationScreen}
           options={{ title: 'Navigate' }}
         />

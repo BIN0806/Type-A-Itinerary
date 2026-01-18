@@ -1,8 +1,8 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE_URL = __DEV__ 
-  ? 'http://10.43.218.160:8000/v1'  // Host machine IP (not localhost - simulator can't reach localhost)
+const API_BASE_URL = __DEV__
+  ? 'http://10.0.0.175:8000/v1'  // Host machine IP (not localhost - simulator can't reach localhost)
   : 'https://api.plana.app/v1';
 
 class ApiService {
@@ -14,7 +14,7 @@ class ApiService {
     console.log('🌐 API Service initialized');
     console.log('📡 Base URL:', API_BASE_URL);
     console.log('🔧 __DEV__:', __DEV__);
-    
+
     this.client = axios.create({
       baseURL: API_BASE_URL,
       headers: {
@@ -65,7 +65,7 @@ class ApiService {
     console.log('🔐 Attempting registration...');
     console.log('📧 Email:', email);
     console.log('🌐 URL:', this.client.defaults.baseURL + '/auth/register');
-    
+
     try {
       const response = await this.client.post('/auth/register', { email, password });
       console.log('✅ Registration successful:', response.status);
@@ -97,7 +97,7 @@ class ApiService {
   async uploadImages(images: File[] | FormData) {
     console.log('📤 API: uploadImages called');
     const formData = images instanceof FormData ? images : new FormData();
-    
+
     if (!(images instanceof FormData)) {
       images.forEach((image, index) => {
         formData.append('files', image);
@@ -188,7 +188,7 @@ class ApiService {
 
   // Places search API (for location editing)
   async searchPlaces(
-    query: string, 
+    query: string,
     locationContext?: { lat: number; lng: number } | null
   ) {
     const params: any = { query };

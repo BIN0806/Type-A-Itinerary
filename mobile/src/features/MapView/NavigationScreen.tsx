@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,19 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
+  TextInput,
+  Modal,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { apiService } from '../../services/api';
+import {
+  requestNotificationPermissions,
+  scheduleFiveMinuteWarning,
+  cancelScheduledNotification,
+  addNotificationResponseListener,
+} from '../../services/notificationService';
 
 type NavigationScreenProps = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Navigation'>;
@@ -28,8 +36,36 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
   const [isLoading, setIsLoading] = useState(true);
   const [currentStop, setCurrentStop] = useState(0);
 
+  // Timer state
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [showExtendModal, setShowExtendModal] = useState(false);
+  const [extensionMinutes, setExtensionMinutes] = useState('15');
+
+  // Refs for timer management
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fiveMinWarningShown = useRef(false);
+  const notificationIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     loadData();
+    requestNotificationPermissions();
+
+    // Listen for notification taps to show extend modal
+    const subscription = addNotificationResponseListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.type === 'five-minute-warning') {
+        setShowExtendModal(true);
+      }
+    });
+
+    return () => {
+      subscription.remove();
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (notificationIdRef.current) {
+        cancelScheduledNotification(notificationIdRef.current);
+      }
+    };
   }, []);
 
   const loadData = async () => {
@@ -38,7 +74,7 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
         apiService.getTrip(tripId),
         apiService.getMapsLink(tripId),
       ]);
-      
+
       setTrip(tripResponse);
       setMapsLink(linkResponse.url);
     } catch (error: any) {
@@ -74,9 +110,108 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
 
   const handlePrevious = () => {
     if (currentStop > 0) {
+      stopTimer();
       setCurrentStop(currentStop - 1);
     }
   };
+
+  // Timer functions
+  const startTimer = (durationMinutes: number) => {
+    const totalSeconds = durationMinutes * 60;
+    setRemainingSeconds(totalSeconds);
+    setIsTimerRunning(true);
+    fiveMinWarningShown.current = false;
+
+    // Schedule 5-minute warning notification
+    if (totalSeconds > 300) {
+      const secondsUntilWarning = totalSeconds - 300;
+      const currentWaypoint = trip?.waypoints?.[currentStop];
+      scheduleFiveMinuteWarning(
+        currentWaypoint?.name || 'this location',
+        secondsUntilWarning
+      ).then((id) => {
+        notificationIdRef.current = id;
+      });
+    }
+  };
+
+  const stopTimer = () => {
+    setIsTimerRunning(false);
+    setRemainingSeconds(null);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (notificationIdRef.current) {
+      cancelScheduledNotification(notificationIdRef.current);
+      notificationIdRef.current = null;
+    }
+  };
+
+  const extendTime = () => {
+    const additionalMinutes = parseInt(extensionMinutes, 10) || 15;
+    const additionalSeconds = additionalMinutes * 60;
+
+    setRemainingSeconds((prev) => (prev || 0) + additionalSeconds);
+    fiveMinWarningShown.current = false;
+    setShowExtendModal(false);
+    setExtensionMinutes('15');
+
+    // Reschedule notification if we now have more than 5 min
+    if (notificationIdRef.current) {
+      cancelScheduledNotification(notificationIdRef.current);
+    }
+    const newRemaining = (remainingSeconds || 0) + additionalSeconds;
+    if (newRemaining > 300) {
+      const currentWaypoint = trip?.waypoints?.[currentStop];
+      scheduleFiveMinuteWarning(
+        currentWaypoint?.name || 'this location',
+        newRemaining - 300
+      ).then((id) => {
+        notificationIdRef.current = id;
+      });
+    }
+  };
+
+  const formatTimeRemaining = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Timer countdown effect
+  useEffect(() => {
+    if (!isTimerRunning || remainingSeconds === null) return;
+
+    timerRef.current = setInterval(() => {
+      setRemainingSeconds((prev) => {
+        if (prev === null || prev <= 0) {
+          setIsTimerRunning(false);
+          if (timerRef.current) clearInterval(timerRef.current);
+          Alert.alert(
+            'Time\'s Up!',
+            'Your planned stay at this location has ended.',
+            [{ text: 'OK' }]
+          );
+          return 0;
+        }
+
+        const next = prev - 1;
+
+        // 5-minute warning - show extend modal
+        if (next === 300 && !fiveMinWarningShown.current) {
+          fiveMinWarningShown.current = true;
+          setShowExtendModal(true);
+        }
+
+        return next;
+      });
+    }, 1000);
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [isTimerRunning]);
 
   if (isLoading) {
     return (
@@ -95,8 +230,8 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
   }
 
   const currentWaypoint = trip.waypoints[currentStop];
-  const nextWaypoint = currentStop < trip.waypoints.length - 1 
-    ? trip.waypoints[currentStop + 1] 
+  const nextWaypoint = currentStop < trip.waypoints.length - 1
+    ? trip.waypoints[currentStop + 1]
     : null;
 
   return (
@@ -121,9 +256,39 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
               hour12: false
             })}
           </Text>
-          <Text style={styles.currentStay}>
-            Stay for {currentWaypoint.estimated_stay_duration || 60} minutes
-          </Text>
+
+          {/* Timer Display */}
+          {isTimerRunning && remainingSeconds !== null ? (
+            <View style={styles.timerContainer} testID="timer-display">
+              <Text style={[
+                styles.timerText,
+                remainingSeconds <= 300 && styles.timerTextWarning
+              ]}>
+                {formatTimeRemaining(remainingSeconds)}
+              </Text>
+              <Text style={styles.timerLabel}>remaining</Text>
+              <TouchableOpacity
+                style={styles.stopTimerButton}
+                onPress={stopTimer}
+                testID="stop-timer-button"
+              >
+                <Text style={styles.stopTimerButtonText}>Stop Timer</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.timerContainer}>
+              <Text style={styles.currentStay}>
+                Stay for {currentWaypoint.estimated_stay_duration || 60} minutes
+              </Text>
+              <TouchableOpacity
+                style={styles.startTimerButton}
+                onPress={() => startTimer(currentWaypoint.estimated_stay_duration || 60)}
+                testID="start-timer-button"
+              >
+                <Text style={styles.startTimerButtonText}>⏱ Start Timer</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {nextWaypoint && (
@@ -175,6 +340,52 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
           </Text>
         </TouchableOpacity>
       </View>
+
+      {/* Extend Time Modal */}
+      <Modal
+        visible={showExtendModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowExtendModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.extendModal} testID="extend-time-modal">
+            <Text style={styles.extendModalTitle}>⏱ Time Check</Text>
+            <Text style={styles.extendModalMessage}>
+              Would you like to stay at {currentWaypoint?.name} for longer?
+            </Text>
+
+            <View style={styles.extendInputRow}>
+              <Text style={styles.extendInputLabel}>Add</Text>
+              <TextInput
+                style={styles.extendInput}
+                value={extensionMinutes}
+                onChangeText={setExtensionMinutes}
+                keyboardType="number-pad"
+                maxLength={3}
+                testID="extend-time-input"
+              />
+              <Text style={styles.extendInputLabel}>minutes</Text>
+            </View>
+
+            <View style={styles.extendModalButtons}>
+              <TouchableOpacity
+                style={styles.extendCancelButton}
+                onPress={() => setShowExtendModal(false)}
+              >
+                <Text style={styles.extendCancelButtonText}>No Thanks</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.extendConfirmButton}
+                onPress={extendTime}
+                testID="confirm-extend-button"
+              >
+                <Text style={styles.extendConfirmButtonText}>Add Time</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -321,5 +532,126 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 20,
     fontWeight: 'bold',
+  },
+  // Timer styles
+  timerContainer: {
+    marginTop: 16,
+    alignItems: 'center',
+  },
+  timerText: {
+    fontSize: 48,
+    fontWeight: 'bold',
+    color: '#4F46E5',
+    fontVariant: ['tabular-nums'],
+  },
+  timerTextWarning: {
+    color: '#DC2626',
+  },
+  timerLabel: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  startTimerButton: {
+    marginTop: 12,
+    backgroundColor: '#4F46E5',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+  },
+  startTimerButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  stopTimerButton: {
+    marginTop: 12,
+    backgroundColor: '#EF4444',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  stopTimerButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  extendModal: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    width: '85%',
+    maxWidth: 340,
+    alignItems: 'center',
+  },
+  extendModalTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  extendModalMessage: {
+    fontSize: 16,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 22,
+  },
+  extendInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  extendInputLabel: {
+    fontSize: 16,
+    color: '#374151',
+    marginHorizontal: 8,
+  },
+  extendInput: {
+    borderWidth: 2,
+    borderColor: '#4F46E5',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    fontSize: 20,
+    fontWeight: '600',
+    width: 80,
+    textAlign: 'center',
+    backgroundColor: '#EEF2FF',
+  },
+  extendModalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  extendCancelButton: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  extendCancelButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  extendConfirmButton: {
+    flex: 1,
+    backgroundColor: '#4F46E5',
+    paddingVertical: 14,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  extendConfirmButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
   },
 });
