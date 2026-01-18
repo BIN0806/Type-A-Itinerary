@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
     View,
     Text,
@@ -6,6 +6,9 @@ import {
     StyleSheet,
     Alert,
     Platform,
+    Modal,
+    TextInput,
+    KeyboardAvoidingView,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/AppNavigator';
@@ -17,12 +20,28 @@ type HomeScreenProps = {
 };
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
+    const [isModalVisible, setIsModalVisible] = useState(false);
+    const [tripName, setTripName] = useState('');
+
     const handleCreateTrips = () => {
-        navigation.navigate('Upload');
+        setTripName('');
+        setIsModalVisible(true);
+    };
+
+    const handleModalCancel = () => {
+        setIsModalVisible(false);
+        setTripName('');
+    };
+
+    const handleModalContinue = () => {
+        const name = tripName.trim() || 'My Trip';
+        setIsModalVisible(false);
+        setTripName('');
+        navigation.navigate('Upload', { tripName: name });
     };
 
     const handlePastTrips = () => {
-        Alert.alert('Coming Soon', 'Past Trips feature is coming soon!');
+        navigation.navigate('PastTrips');
     };
 
     const handleAddCredits = () => {
@@ -77,6 +96,54 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                     </TouchableOpacity>
                 </View>
             </View>
+
+            {/* Trip Name Modal */}
+            <Modal
+                visible={isModalVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={handleModalCancel}
+            >
+                <KeyboardAvoidingView
+                    style={styles.modalOverlay}
+                    behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+                >
+                    <View style={styles.modalContent}>
+                        <Text style={styles.modalTitle}>Name Your Trip</Text>
+                        <Text style={styles.modalSubtitle}>
+                            Give your trip a memorable name
+                        </Text>
+
+                        <TextInput
+                            style={styles.modalInput}
+                            placeholder="e.g., Tokyo Adventure"
+                            placeholderTextColor="#9CA3AF"
+                            value={tripName}
+                            onChangeText={setTripName}
+                            autoFocus
+                            maxLength={50}
+                            returnKeyType="done"
+                            onSubmitEditing={handleModalContinue}
+                        />
+
+                        <View style={styles.modalButtons}>
+                            <TouchableOpacity
+                                style={styles.modalButtonCancel}
+                                onPress={handleModalCancel}
+                            >
+                                <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.modalButtonContinue}
+                                onPress={handleModalContinue}
+                            >
+                                <Text style={styles.modalButtonContinueText}>Continue</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </KeyboardAvoidingView>
+            </Modal>
         </SafeAreaView>
     );
 };
@@ -144,5 +211,76 @@ const styles = StyleSheet.create({
         color: '#EF4444',
         fontSize: 16,
         fontWeight: '500',
+    },
+    // Modal styles
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
+    },
+    modalContent: {
+        backgroundColor: '#fff',
+        borderRadius: 20,
+        padding: 24,
+        width: '100%',
+        maxWidth: 400,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 10 },
+        shadowOpacity: 0.25,
+        shadowRadius: 20,
+        elevation: 10,
+    },
+    modalTitle: {
+        fontSize: 24,
+        fontWeight: 'bold',
+        color: '#111827',
+        textAlign: 'center',
+        marginBottom: 8,
+    },
+    modalSubtitle: {
+        fontSize: 14,
+        color: '#6B7280',
+        textAlign: 'center',
+        marginBottom: 24,
+    },
+    modalInput: {
+        backgroundColor: '#F3F4F6',
+        borderRadius: 12,
+        padding: 16,
+        fontSize: 16,
+        color: '#111827',
+        marginBottom: 24,
+        borderWidth: 2,
+        borderColor: '#E5E7EB',
+    },
+    modalButtons: {
+        flexDirection: 'row',
+        gap: 12,
+    },
+    modalButtonCancel: {
+        flex: 1,
+        backgroundColor: '#F3F4F6',
+        borderRadius: 12,
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    modalButtonCancelText: {
+        color: '#6B7280',
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    modalButtonContinue: {
+        flex: 1,
+        backgroundColor: '#4F46E5',
+        borderRadius: 12,
+        paddingVertical: 14,
+        alignItems: 'center',
+    },
+    modalButtonContinueText: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '600',
     },
 });

@@ -10,17 +10,19 @@ import { NavigationScreen } from '../features/MapView/NavigationScreen';
 import { LoginScreen } from '../features/Auth/LoginScreen';
 import { RegisterScreen } from '../features/Auth/RegisterScreen';
 import { HomeScreen } from '../features/Home/HomeScreen';
+import { PastTripsScreen } from '../features/PastTrips/PastTripsScreen';
 
 export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
   Home: undefined;
-  Upload: undefined;
-  Confirmation: { jobId: string };
+  Upload: { tripName?: string };
+  Confirmation: { jobId: string; tripName?: string };
   Constraints: { tripId: string };
   Timeline: { tripId: string };
   MapView: { tripId: string };
   Navigation: { tripId: string };
+  PastTrips: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -84,6 +86,11 @@ export const AppNavigator = () => {
           name="Navigation"
           component={NavigationScreen}
           options={{ title: 'Navigate' }}
+        />
+        <Stack.Screen
+          name="PastTrips"
+          component={PastTripsScreen}
+          options={{ title: 'Past Trips' }}
         />
       </Stack.Navigator>
     </NavigationContainer>

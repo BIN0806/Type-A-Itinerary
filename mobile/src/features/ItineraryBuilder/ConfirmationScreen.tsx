@@ -103,7 +103,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
   navigation,
   route,
 }) => {
-  const { jobId } = route.params;
+  const { jobId, tripName } = route.params;
 
   // Core state
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -461,7 +461,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
         estimated_stay_duration: loc.estimated_stay_duration,
       }));
 
-      const response = await apiService.confirmWaypoints(jobId, waypoints, 'My Trip');
+      const response = await apiService.confirmWaypoints(jobId, waypoints, tripName || 'My Trip');
       navigation.navigate('Constraints', { tripId: response.id });
     } catch (error: any) {
       Alert.alert(
@@ -580,7 +580,7 @@ export const ConfirmationScreen: React.FC<ConfirmationScreenProps> = ({
                   <Text style={styles.summaryCardRating}>★ {location.rating.toFixed(1)}</Text>
                 )}
                 <Text style={styles.summaryCardDuration} testID={`stay-duration-${index}`}>
-                  ⏱ {location.estimated_stay_duration || 60} min stay
+                  {location.estimated_stay_duration || 60} min stay
                 </Text>
                 <View style={styles.summaryCardActions}>
                   <TouchableOpacity

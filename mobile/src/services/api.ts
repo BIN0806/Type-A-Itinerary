@@ -1,8 +1,9 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// If login fails with network error, run: npm run update-ip
 const API_BASE_URL = __DEV__
-  ? 'http://10.0.0.175:8000/v1'  // Host machine IP (not localhost - simulator can't reach localhost)
+  ? 'http://10.43.218.160:8000/v1'  // Auto-updated by scripts/update-ip.js
   : 'https://api.plana.app/v1';
 
 class ApiService {
@@ -204,6 +205,11 @@ class ApiService {
   async getPlacePhoto(placeId: string) {
     const response = await this.client.get(`/places/${placeId}/photo`);
     return response.data;
+  }
+
+  // Delete a trip
+  async deleteTrip(tripId: string) {
+    await this.client.delete(`/trip/${tripId}`);
   }
 }
 

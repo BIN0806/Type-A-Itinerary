@@ -11,21 +11,24 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { apiService } from '../../services/api';
 
 type UploadScreenProps = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Upload'>;
+  route: RouteProp<RootStackParamList, 'Upload'>;
 };
 
-export const UploadScreen: React.FC<UploadScreenProps> = ({ navigation }) => {
+export const UploadScreen: React.FC<UploadScreenProps> = ({ navigation, route }) => {
+  const tripName = route.params?.tripName || 'My Trip';
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ [key: number]: boolean }>({});
 
   const pickImages = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    
+
     if (status !== 'granted') {
       Alert.alert(
         'Permission Required',
@@ -64,7 +67,7 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ navigation }) => {
     try {
       // Create FormData
       const formData = new FormData();
-      
+
       selectedImages.forEach((uri, index) => {
         const filename = uri.split('/').pop() || `image_${index}.jpg`;
         const match = /\.(\w+)$/.exec(filename);
@@ -92,7 +95,7 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ navigation }) => {
         [
           {
             text: 'OK',
-            onPress: () => navigation.navigate('Confirmation', { jobId: job_id })
+            onPress: () => navigation.navigate('Confirmation', { jobId: job_id, tripName })
           }
         ]
       );
@@ -106,10 +109,10 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ navigation }) => {
 
       // Better error messages based on error type
       let errorMessage = 'Could not upload images';
-      
-      if (error.response?.status === 429 || 
-          error.response?.data?.detail?.includes('quota') ||
-          error.response?.data?.detail?.includes('OpenAI')) {
+
+      if (error.response?.status === 429 ||
+        error.response?.data?.detail?.includes('quota') ||
+        error.response?.data?.detail?.includes('OpenAI')) {
         errorMessage = 'API quota exceeded. Please check your OpenAI API credits at platform.openai.com/account/billing';
       } else if (error.response?.status === 401) {
         errorMessage = 'Authentication error. Please try logging in again.';

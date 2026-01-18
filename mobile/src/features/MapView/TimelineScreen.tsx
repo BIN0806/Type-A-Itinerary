@@ -10,6 +10,8 @@ import {
   Linking,
   Platform,
   Dimensions,
+  Modal,
+  TextInput,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
@@ -58,9 +60,14 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
   const [isSharing, setIsSharing] = useState(false);
   const [mapRouteData, setMapRouteData] = useState<any>(null);
 
-  // Refs for capturing screenshots
-  const timelineRef = useRef<ScrollView>(null);
-  const mapRef = useRef<View>(null);
+  // Break time editing state
+  const [showBreakTimeModal, setShowBreakTimeModal] = useState(false);
+  const [editingSegmentIndex, setEditingSegmentIndex] = useState<number | null>(null);
+  const [breakTimeInput, setBreakTimeInput] = useState('');
+  const [extraBreakTimes, setExtraBreakTimes] = useState<{ [key: number]: number }>({});
+
+  // Ref for capturing combined screenshot (timeline + map)
+  const combinedShareRef = useRef<View>(null);
 
   useEffect(() => {
     loadTrip();
@@ -109,7 +116,7 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
     loadRouteData();
   }, [tripId]);
 
-  // Share handler - captures timeline and map images
+  // Share handler - captures combined timeline + map image
   const handleShare = async () => {
     if (!trip?.waypoints?.length) {
       Alert.alert('Error', 'No itinerary to share');
@@ -125,53 +132,20 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
     setIsSharing(true);
 
     try {
-      const imagesToShare: string[] = [];
+      // Longer delay to ensure MapView tiles and polylines are fully rendered
+      await new Promise(resolve => setTimeout(resolve, 1500));
 
-      // Capture timeline image
-      if (timelineRef.current) {
-        const timelineUri = await captureRef(timelineRef, {
+      // Capture combined image (timeline + map in one view)
+      if (combinedShareRef.current) {
+        const uri = await captureRef(combinedShareRef, {
           format: 'png',
           quality: 1,
         });
-        imagesToShare.push(timelineUri);
-      }
 
-      // Capture map image
-      if (mapRef.current) {
-        const mapUri = await captureRef(mapRef, {
-          format: 'png',
-          quality: 1,
-        });
-        imagesToShare.push(mapUri);
-      }
-
-      // Share the first image (iOS share sheet doesn't support multiple images well)
-      // We share timeline first, then prompt for map
-      if (imagesToShare.length > 0) {
-        await Sharing.shareAsync(imagesToShare[0], {
+        await Sharing.shareAsync(uri, {
           mimeType: 'image/png',
-          dialogTitle: 'Share your itinerary',
+          dialogTitle: 'Share your trip itinerary',
         });
-
-        // If we have a second image, offer to share it too
-        if (imagesToShare.length > 1) {
-          Alert.alert(
-            'Share Map',
-            'Would you like to also share the map view?',
-            [
-              { text: 'No', style: 'cancel' },
-              {
-                text: 'Yes',
-                onPress: async () => {
-                  await Sharing.shareAsync(imagesToShare[1], {
-                    mimeType: 'image/png',
-                    dialogTitle: 'Share route map',
-                  });
-                },
-              },
-            ]
-          );
-        }
       }
     } catch (error: any) {
       console.error('Share error:', error);
@@ -342,6 +316,15 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
     latitudeDelta: (maxLat - minLat) * 1.5 || 0.05,
     longitudeDelta: (maxLng - minLng) * 1.5 || 0.05,
   };
+  // More zoomed-out region for share image to show all pins clearly with padding
+  const latPadding = Math.max((maxLat - minLat) * 0.3, 0.01); // 30% padding
+  const lngPadding = Math.max((maxLng - minLng) * 0.3, 0.01);
+  const shareMapRegion = {
+    latitude: (minLat + maxLat) / 2,
+    longitude: (minLng + maxLng) / 2,
+    latitudeDelta: Math.max((maxLat - minLat) + latPadding * 2, 0.02) * 1.5,
+    longitudeDelta: Math.max((maxLng - minLng) + lngPadding * 2, 0.02) * 1.5,
+  };
   const segmentColors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
   return (
@@ -360,7 +343,7 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
         </View>
       </View>
 
-      <ScrollView ref={timelineRef} style={styles.timeline}>
+      <ScrollView style={styles.timeline}>
         {trip.waypoints.map((waypoint: any, index: number) => {
           const segment = getRouteSegmentForWaypoint(waypoint.order);
           const hasTransit = segment?.transit_steps && segment.transit_steps.length > 0;
@@ -416,11 +399,22 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
                         <View style={styles.walkingDot} />
                       </View>
                       <Text style={styles.walkingText}>
-                        🚶 Walking • {calculateTravelTime(
+                        Walking • {calculateTravelTime(
                           waypoint.departure_time,
                           trip.waypoints[index + 1].arrival_time
-                        )} min
+                        ) + (extraBreakTimes[index] || 0)} min
+                        {extraBreakTimes[index] ? ` (+${extraBreakTimes[index]} break)` : ''}
                       </Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          setEditingSegmentIndex(index);
+                          setBreakTimeInput(extraBreakTimes[index]?.toString() || '');
+                          setShowBreakTimeModal(true);
+                        }}
+                        style={styles.editBreakButton}
+                      >
+                        <Text style={styles.editBreakText}>Edit</Text>
+                      </TouchableOpacity>
                     </View>
                   )}
                 </View>
@@ -477,6 +471,66 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
         </TouchableOpacity>
       )}
 
+      {/* Break Time Edit Modal */}
+      <Modal
+        visible={showBreakTimeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowBreakTimeModal(false)}
+      >
+        <View style={styles.breakTimeModalOverlay}>
+          <View style={styles.breakTimeModal}>
+            <Text style={styles.breakTimeModalTitle}>Want more time in between?</Text>
+            <Text style={styles.breakTimeModalSubtitle}>
+              Add extra break time before your next stop
+            </Text>
+
+            <View style={styles.breakTimeInputRow}>
+              <TextInput
+                style={styles.breakTimeInput}
+                value={breakTimeInput}
+                onChangeText={setBreakTimeInput}
+                keyboardType="number-pad"
+                placeholder="0"
+                maxLength={3}
+                autoFocus
+              />
+              <Text style={styles.breakTimeInputUnit}>minutes</Text>
+            </View>
+
+            <View style={styles.breakTimeModalButtons}>
+              <TouchableOpacity
+                style={styles.breakTimeButtonCancel}
+                onPress={() => {
+                  setShowBreakTimeModal(false);
+                  setEditingSegmentIndex(null);
+                  setBreakTimeInput('');
+                }}
+              >
+                <Text style={styles.breakTimeButtonCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.breakTimeButtonSave}
+                onPress={() => {
+                  const minutes = parseInt(breakTimeInput, 10) || 0;
+                  if (editingSegmentIndex !== null) {
+                    setExtraBreakTimes(prev => ({
+                      ...prev,
+                      [editingSegmentIndex]: minutes,
+                    }));
+                  }
+                  setShowBreakTimeModal(false);
+                  setEditingSegmentIndex(null);
+                  setBreakTimeInput('');
+                }}
+              >
+                <Text style={styles.breakTimeButtonSaveText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       <View style={styles.footer}>
         <TouchableOpacity
           style={styles.button}
@@ -490,7 +544,7 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
           onPress={handleShare}
           disabled={isSharing}
         >
-          <Text style={styles.buttonShareText}>{isSharing ? '...' : '📤'}</Text>
+          <Text style={styles.buttonShareText}>{isSharing ? '...' : '📎'}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -510,75 +564,126 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* Hidden MapView for screenshot capture */}
+      {/* Combined hidden view for screenshot capture (Timeline + Map in one image) */}
       <View
-        ref={mapRef}
-        style={styles.hiddenMapContainer}
+        ref={combinedShareRef}
+        style={styles.combinedShareContainer}
         collapsable={false}
       >
-        <View style={styles.hiddenMapHeader}>
-          <Text style={styles.hiddenMapTitle}>{trip.name}</Text>
-          <Text style={styles.hiddenMapSubtitle}>
-            {trip.waypoints.length} stops • {trip.total_time_minutes} min
-          </Text>
+        {/* Timeline Section */}
+        <View style={styles.hiddenTimelineSection}>
+          <View style={styles.hiddenTimelineHeader}>
+            <Text style={styles.hiddenTimelineTitle}>📅 {trip.name}</Text>
+            <Text style={styles.hiddenTimelineSubtitle}>
+              {trip.waypoints.length} stops • {trip.total_time_minutes} min
+            </Text>
+          </View>
+          {trip.waypoints.map((waypoint: any, index: number) => {
+            const segment = getRouteSegmentForWaypoint(waypoint.order);
+            const hasTransit = segment?.transit_steps && segment.transit_steps.length > 0;
+
+            return (
+              <View key={`hidden-${waypoint.id}`}>
+                <View style={styles.hiddenTimelineItem}>
+                  <View style={styles.hiddenTimelineMarker}>
+                    <View style={[
+                      styles.hiddenTimelineDot,
+                      index === 0 && { backgroundColor: '#10B981' },
+                      index === trip.waypoints.length - 1 && { backgroundColor: '#EF4444' },
+                    ]} />
+                    {index < trip.waypoints.length - 1 && (
+                      <View style={styles.hiddenTimelineLine} />
+                    )}
+                  </View>
+                  <View style={styles.hiddenTimelineContent}>
+                    <Text style={styles.hiddenTimelineTime}>
+                      {formatTime(waypoint.arrival_time)} - {formatTime(waypoint.departure_time)}
+                    </Text>
+                    <Text style={styles.hiddenTimelineName}>{waypoint.name}</Text>
+                    <Text style={styles.hiddenTimelineDuration}>
+                      Stay: {waypoint.estimated_stay_duration || 60} min
+                    </Text>
+                  </View>
+                </View>
+                {index < trip.waypoints.length - 1 && (
+                  <View style={styles.hiddenTravelSegment}>
+                    <Text style={styles.hiddenTravelText}>
+                      {hasTransit ? '🚇' : '🚶'} {calculateTravelTime(
+                        waypoint.departure_time,
+                        trip.waypoints[index + 1].arrival_time
+                      )} min
+                    </Text>
+                  </View>
+                )}
+              </View>
+            );
+          })}
         </View>
-        <MapView
-          provider={PROVIDER_GOOGLE}
-          style={styles.hiddenMap}
-          region={mapRegion}
-          scrollEnabled={false}
-          zoomEnabled={false}
-          rotateEnabled={false}
-          pitchEnabled={false}
-        >
-          {/* Render route polylines */}
-          {mapRouteData?.segments?.map((segment: any, index: number) => (
-            <Polyline
-              key={`route-${index}`}
-              coordinates={segment.polyline.map((point: any) => ({
-                latitude: point.lat,
-                longitude: point.lng,
-              }))}
-              strokeColor={segmentColors[index % segmentColors.length]}
-              strokeWidth={4}
-            />
-          ))}
 
-          {/* Fallback straight lines if no route data */}
-          {!mapRouteData && (
-            <Polyline
-              coordinates={coordinates}
-              strokeColor="#4F46E5"
-              strokeWidth={3}
-              lineDashPattern={[5, 5]}
-            />
-          )}
+        {/* Divider */}
+        <View style={styles.sectionDivider} />
 
-          {/* Waypoint markers */}
-          {trip.waypoints.map((waypoint: any, index: number) => (
-            <Marker
-              key={waypoint.id}
-              coordinate={{
-                latitude: waypoint.lat,
-                longitude: waypoint.lng,
-              }}
-              title={waypoint.name}
-              pinColor={index === 0 ? 'green' : index === trip.waypoints.length - 1 ? 'red' : '#4F46E5'}
-            />
-          ))}
-        </MapView>
-        <View style={styles.hiddenMapLegend}>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: 'green' }]} />
-            <Text style={styles.legendText}>Start</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: '#4F46E5' }]} />
-            <Text style={styles.legendText}>Stops</Text>
-          </View>
-          <View style={styles.legendItem}>
-            <View style={[styles.legendDot, { backgroundColor: 'red' }]} />
-            <Text style={styles.legendText}>End</Text>
+        {/* Map Section */}
+        <View style={styles.hiddenMapSection}>
+          <Text style={styles.hiddenMapSectionTitle}>🗺️ Route Map</Text>
+          <MapView
+            provider={PROVIDER_GOOGLE}
+            style={styles.hiddenMap}
+            region={shareMapRegion}
+            scrollEnabled={false}
+            zoomEnabled={false}
+            rotateEnabled={false}
+            pitchEnabled={false}
+          >
+            {/* Render route polylines */}
+            {mapRouteData?.segments?.map((segment: any, index: number) => (
+              <Polyline
+                key={`route-${index}`}
+                coordinates={segment.polyline.map((point: any) => ({
+                  latitude: point.lat,
+                  longitude: point.lng,
+                }))}
+                strokeColor={segmentColors[index % segmentColors.length]}
+                strokeWidth={4}
+              />
+            ))}
+
+            {/* Fallback straight lines if no route data */}
+            {!mapRouteData && (
+              <Polyline
+                coordinates={coordinates}
+                strokeColor="#4F46E5"
+                strokeWidth={3}
+                lineDashPattern={[5, 5]}
+              />
+            )}
+
+            {/* Waypoint markers */}
+            {trip.waypoints.map((waypoint: any, index: number) => (
+              <Marker
+                key={`share-marker-${waypoint.id}`}
+                coordinate={{
+                  latitude: waypoint.lat,
+                  longitude: waypoint.lng,
+                }}
+                title={waypoint.name}
+                pinColor={index === 0 ? 'green' : index === trip.waypoints.length - 1 ? 'red' : '#4F46E5'}
+              />
+            ))}
+          </MapView>
+          <View style={styles.hiddenMapLegend}>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: 'green' }]} />
+              <Text style={styles.legendText}>Start</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: '#4F46E5' }]} />
+              <Text style={styles.legendText}>Stops</Text>
+            </View>
+            <View style={styles.legendItem}>
+              <View style={[styles.legendDot, { backgroundColor: 'red' }]} />
+              <Text style={styles.legendText}>End</Text>
+            </View>
           </View>
         </View>
       </View>
@@ -910,7 +1015,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   hiddenMap: {
-    flex: 1,
+    height: 350,
     width: '100%',
   },
   hiddenMapLegend: {
@@ -952,5 +1057,197 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 16,
     fontWeight: '600',
+  },
+  // Hidden Timeline for full-content screenshot capture
+  hiddenTimelineContainer: {
+    position: 'absolute',
+    left: -2000,
+    top: 0,
+    width: Dimensions.get('window').width,
+    backgroundColor: '#fff',
+    padding: 20,
+  },
+  hiddenTimelineHeader: {
+    marginBottom: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  hiddenTimelineTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  hiddenTimelineSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  hiddenTimelineItem: {
+    flexDirection: 'row',
+    marginBottom: 4,
+  },
+  hiddenTimelineMarker: {
+    alignItems: 'center',
+    marginRight: 16,
+    width: 20,
+  },
+  hiddenTimelineDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#4F46E5',
+  },
+  hiddenTimelineLine: {
+    width: 2,
+    flex: 1,
+    backgroundColor: '#D1D5DB',
+    marginTop: 4,
+    minHeight: 40,
+  },
+  hiddenTimelineContent: {
+    flex: 1,
+    paddingBottom: 8,
+  },
+  hiddenTimelineTime: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4F46E5',
+    marginBottom: 4,
+  },
+  hiddenTimelineName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#111827',
+    marginBottom: 2,
+  },
+  hiddenTimelineDuration: {
+    fontSize: 12,
+    color: '#9CA3AF',
+  },
+  hiddenTravelSegment: {
+    paddingLeft: 36,
+    paddingVertical: 8,
+    marginBottom: 8,
+  },
+  hiddenTravelText: {
+    fontSize: 13,
+    color: '#6B7280',
+  },
+  // Combined share container (timeline + map in one image)
+  combinedShareContainer: {
+    position: 'absolute',
+    left: -2000,
+    top: 0,
+    width: Dimensions.get('window').width,
+    backgroundColor: '#fff',
+  },
+  hiddenTimelineSection: {
+    padding: 20,
+  },
+  sectionDivider: {
+    height: 2,
+    backgroundColor: '#E5E7EB',
+    marginHorizontal: 20,
+  },
+  hiddenMapSection: {
+    padding: 20,
+  },
+  hiddenMapSectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  // Edit break button (inline with walking text)
+  editBreakButton: {
+    marginLeft: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+  },
+  editBreakText: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  // Break Time Modal styles
+  breakTimeModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  breakTimeModal: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+  },
+  breakTimeModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#111827',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  breakTimeModalSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  breakTimeInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  breakTimeInput: {
+    borderWidth: 2,
+    borderColor: '#4F46E5',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    fontSize: 24,
+    fontWeight: '600',
+    width: 100,
+    textAlign: 'center',
+    backgroundColor: '#EEF2FF',
+  },
+  breakTimeInputUnit: {
+    fontSize: 16,
+    color: '#374151',
+    marginLeft: 12,
+  },
+  breakTimeModalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    width: '100%',
+  },
+  breakTimeButtonCancel: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  breakTimeButtonCancelText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  breakTimeButtonSave: {
+    flex: 1,
+    backgroundColor: '#4F46E5',
+    paddingVertical: 14,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  breakTimeButtonSaveText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#fff',
   },
 });

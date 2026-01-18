@@ -50,8 +50,9 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
   const [selectedSegment, setSelectedSegment] = useState<RouteSegment | null>(null);
   const [isSharing, setIsSharing] = useState(false);
 
-  // Ref for map capture
+  // Refs for map and capture
   const mapContainerRef = useRef<View>(null);
+  const mapViewRef = useRef<MapView>(null);
 
   useEffect(() => {
     loadTrip();
@@ -109,9 +110,33 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
       return;
     }
 
+    if (!trip?.waypoints?.length) {
+      Alert.alert('Error', 'No waypoints to share');
+      return;
+    }
+
     setIsSharing(true);
+    // Dismiss any selected segment to clean up UI for screenshot
+    setSelectedSegment(null);
 
     try {
+      // Step 1: Zoom out the map to fit all markers with padding
+      const allCoords = trip.waypoints.map((wp: any) => ({
+        latitude: wp.lat,
+        longitude: wp.lng,
+      }));
+
+      if (mapViewRef.current) {
+        mapViewRef.current.fitToCoordinates(allCoords, {
+          edgePadding: { top: 100, right: 80, bottom: 150, left: 80 },
+          animated: true,
+        });
+      }
+
+      // Step 2: Wait for animation to complete and map to render
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      // Step 3: Capture the screenshot
       if (mapContainerRef.current) {
         const uri = await captureRef(mapContainerRef, {
           format: 'png',
@@ -174,6 +199,7 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
   return (
     <View style={styles.container} ref={mapContainerRef} collapsable={false}>
       <MapView
+        ref={mapViewRef}
         provider={PROVIDER_GOOGLE}
         style={styles.map}
         initialRegion={region}
@@ -203,18 +229,30 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
           />
         )}
 
-        {trip.waypoints.map((waypoint: any, index: number) => (
-          <Marker
-            key={waypoint.id}
-            coordinate={{
-              latitude: waypoint.lat,
-              longitude: waypoint.lng,
-            }}
-            title={waypoint.name}
-            description={`Stop ${waypoint.order}`}
-            pinColor={index === 0 ? 'green' : index === trip.waypoints.length - 1 ? 'red' : '#4F46E5'}
-          />
-        ))}
+        {trip.waypoints.map((waypoint: any, index: number) => {
+          const isStart = index === 0;
+          const isEnd = index === trip.waypoints.length - 1;
+          const color = isStart ? '#10B981' : isEnd ? '#EF4444' : '#4F46E5';
+
+          return (
+            <Marker
+              key={waypoint.id}
+              coordinate={{
+                latitude: waypoint.lat,
+                longitude: waypoint.lng,
+              }}
+              title={waypoint.name}
+              description={`Stop ${waypoint.order}`}
+              anchor={{ x: 0.5, y: 0.5 }}
+            >
+              <View style={[styles.customMarker, { borderColor: color }]}>
+                <View style={[styles.customMarkerInner, { backgroundColor: color }]}>
+                  <Text style={styles.customMarkerText}>{waypoint.order}</Text>
+                </View>
+              </View>
+            </Marker>
+          );
+        })}
       </MapView>
 
       {/* Route info header */}
@@ -429,5 +467,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 16,
     fontWeight: '600',
+  },
+  // Custom small markers
+  customMarker: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customMarkerInner: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  customMarkerText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#fff',
   },
 });

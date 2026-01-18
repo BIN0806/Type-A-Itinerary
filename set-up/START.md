@@ -72,7 +72,7 @@ Choose your platform:
 7. **View** your itinerary on the timeline
 8. **Navigate** with Google Maps integration
 
-## 📱 Test with Sample Data
+## Test with Sample Data
 
 Don't have travel photos? Try these coordinates for Tokyo:
 
@@ -89,7 +89,7 @@ Don't have travel photos? Try these coordinates for Tokyo:
 2. Tokyo Skytree (35.7101° N, 139.8107° E)
 3. Meiji Shrine (35.6764° N, 139.6993° E)
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Backend Issues
 
@@ -143,7 +143,7 @@ npm install
 - Check billing is enabled
 - Verify API key restrictions allow your IP
 
-## 📊 Monitoring
+## Monitoring
 
 ### Backend Health
 ```bash
@@ -169,7 +169,7 @@ KEYS *
 KEYS distance:*
 ```
 
-## 🔒 Security Notes
+## Security Notes
 
 For development:
 - Default JWT secret is insecure - change it!
@@ -177,7 +177,7 @@ For development:
 - No rate limiting on local - don't spam APIs
 - Redis has no password - add one in production
 
-## 💰 API Costs
+## API Costs
 
 Estimated per trip:
 - OpenAI Vision: ~$0.05 per 10 images
@@ -186,13 +186,13 @@ Estimated per trip:
 
 Total: **~$0.10-0.50 per trip** depending on image count.
 
-## 📚 Next Steps
+## Next Steps
 
 1. Read [README.md](README.md) for full documentation
 2. Explore API docs at http://localhost:8000/docs
 3. Run tests: `cd backend && pytest tests/`
 
-## 🎯 Common Use Cases
+## Common Use Cases
 
 ### Scenario 1: Tokyo Day Trip
 - Upload 20 screenshots from TikTok
@@ -210,7 +210,7 @@ Total: **~$0.10-0.50 per trip** depending on image count.
 - Set walking speed to "slow"
 - All-day relaxed itinerary
 
-## 💡 Pro Tips
+## Pro Tips
 
 1. **Better location detection**: Use images with clear text overlays showing place names
 2. **Faster geocoding**: Redis caches results - popular places load instantly

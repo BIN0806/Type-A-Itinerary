@@ -39,6 +39,7 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
   // Timer state
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
   const [showExtendModal, setShowExtendModal] = useState(false);
   const [extensionMinutes, setExtensionMinutes] = useState('15');
 
@@ -46,6 +47,7 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const fiveMinWarningShown = useRef(false);
   const notificationIdRef = useRef<string | null>(null);
+  const initialDurationRef = useRef<number>(60); // Track initial duration for reset
 
   useEffect(() => {
     loadData();
@@ -118,8 +120,10 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
   // Timer functions
   const startTimer = (durationMinutes: number) => {
     const totalSeconds = durationMinutes * 60;
+    initialDurationRef.current = durationMinutes;
     setRemainingSeconds(totalSeconds);
     setIsTimerRunning(true);
+    setIsPaused(false);
     fiveMinWarningShown.current = false;
 
     // Schedule 5-minute warning notification
@@ -135,8 +139,88 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
     }
   };
 
+  const pauseTimer = () => {
+    setIsPaused(true);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    // Cancel notification while paused
+    if (notificationIdRef.current) {
+      cancelScheduledNotification(notificationIdRef.current);
+      notificationIdRef.current = null;
+    }
+  };
+
+  const resumeTimer = () => {
+    setIsPaused(false);
+    // Reschedule notification if more than 5 min remaining
+    if (remainingSeconds && remainingSeconds > 300) {
+      const currentWaypoint = trip?.waypoints?.[currentStop];
+      scheduleFiveMinuteWarning(
+        currentWaypoint?.name || 'this location',
+        remainingSeconds - 300
+      ).then((id) => {
+        notificationIdRef.current = id;
+      });
+    }
+  };
+
+  const resetTimer = () => {
+    const totalSeconds = initialDurationRef.current * 60;
+    setRemainingSeconds(totalSeconds);
+    setIsPaused(false);
+    fiveMinWarningShown.current = false;
+
+    // Cancel old notification and reschedule
+    if (notificationIdRef.current) {
+      cancelScheduledNotification(notificationIdRef.current);
+    }
+    if (totalSeconds > 300) {
+      const currentWaypoint = trip?.waypoints?.[currentStop];
+      scheduleFiveMinuteWarning(
+        currentWaypoint?.name || 'this location',
+        totalSeconds - 300
+      ).then((id) => {
+        notificationIdRef.current = id;
+      });
+    }
+  };
+
+  const finishedEarly = () => {
+    // Stop current timer
+    setIsTimerRunning(false);
+    setIsPaused(false);
+    setRemainingSeconds(null);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (notificationIdRef.current) {
+      cancelScheduledNotification(notificationIdRef.current);
+      notificationIdRef.current = null;
+    }
+
+    // Move to next stop if available
+    if (trip && currentStop < trip.waypoints.length - 1) {
+      setCurrentStop(currentStop + 1);
+      Alert.alert(
+        'Moving On!',
+        'Great! Moving to your next destination.',
+        [{ text: 'OK' }]
+      );
+    } else {
+      Alert.alert(
+        'Trip Complete!',
+        "You've finished all your stops!",
+        [{ text: 'OK' }]
+      );
+    }
+  };
+
   const stopTimer = () => {
     setIsTimerRunning(false);
+    setIsPaused(false);
     setRemainingSeconds(null);
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -181,7 +265,7 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
 
   // Timer countdown effect
   useEffect(() => {
-    if (!isTimerRunning || remainingSeconds === null) return;
+    if (!isTimerRunning || remainingSeconds === null || isPaused) return;
 
     timerRef.current = setInterval(() => {
       setRemainingSeconds((prev) => {
@@ -211,7 +295,7 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [isTimerRunning]);
+  }, [isTimerRunning, isPaused]);
 
   if (isLoading) {
     return (
@@ -262,17 +346,45 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
             <View style={styles.timerContainer} testID="timer-display">
               <Text style={[
                 styles.timerText,
-                remainingSeconds <= 300 && styles.timerTextWarning
+                remainingSeconds <= 300 && styles.timerTextWarning,
+                isPaused && styles.timerTextPaused
               ]}>
                 {formatTimeRemaining(remainingSeconds)}
               </Text>
-              <Text style={styles.timerLabel}>remaining</Text>
+              <Text style={styles.timerLabel}>
+                {isPaused ? 'paused' : 'remaining'}
+              </Text>
+
+              {/* Timer Control Buttons */}
+              <View style={styles.timerControlsRow}>
+                {/* Pause / Resume Button */}
+                <TouchableOpacity
+                  style={styles.timerControlButton}
+                  onPress={isPaused ? resumeTimer : pauseTimer}
+                  testID="pause-timer-button"
+                >
+                  <Text style={styles.timerControlButtonText}>
+                    {isPaused ? 'Resume' : 'Pause'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Reset Button */}
+                <TouchableOpacity
+                  style={styles.timerControlButton}
+                  onPress={resetTimer}
+                  testID="reset-timer-button"
+                >
+                  <Text style={styles.timerControlButtonText}>Reset</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Finished Early Button */}
               <TouchableOpacity
-                style={styles.stopTimerButton}
-                onPress={stopTimer}
-                testID="stop-timer-button"
+                style={styles.finishedEarlyButton}
+                onPress={finishedEarly}
+                testID="finished-early-button"
               >
-                <Text style={styles.stopTimerButtonText}>Stop Timer</Text>
+                <Text style={styles.finishedEarlyButtonText}>✓ Finished Early</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -653,5 +765,37 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#fff',
+  },
+  // Timer control buttons
+  timerTextPaused: {
+    color: '#9CA3AF',
+  },
+  timerControlsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+  },
+  timerControlButton: {
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  timerControlButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  finishedEarlyButton: {
+    marginTop: 12,
+    backgroundColor: '#10B981',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+  },
+  finishedEarlyButtonText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
   },
 });

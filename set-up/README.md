@@ -25,9 +25,9 @@ Run the setup script to install all dependencies:
 ```
 
 This will:
-- ✅ Check prerequisites (Docker, Node.js, npm)
-- ✅ Install mobile dependencies (`npm install` in mobile/)
-- ✅ Set up backend configuration (creates `.env` from `.env.example` if needed)
+- Check prerequisites (Docker, Node.js, npm)
+- Install mobile dependencies (`npm install` in mobile/)
+- Set up backend configuration (creates `.env` from `.env.example` if needed)
 
 **Note:** Backend Python dependencies are installed automatically when you start Docker Compose (no manual `pip install` needed).
 

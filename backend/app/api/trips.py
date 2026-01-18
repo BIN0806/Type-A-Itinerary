@@ -602,6 +602,30 @@ async def get_trip(
     return trip
 
 
+@router.delete("/trip/{trip_id}")
+async def delete_trip(
+    trip_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a trip and its associated waypoints."""
+    trip = db.query(Trip).filter(
+        Trip.id == trip_id,
+        Trip.user_id == current_user.id
+    ).first()
+    
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    db.delete(trip)  # Cascade deletes waypoints
+    db.commit()
+    
+    return {"message": "Trip deleted successfully"}
+
+
 @router.get("/trip/{trip_id}/route")
 async def get_trip_route(
     trip_id: UUID,
