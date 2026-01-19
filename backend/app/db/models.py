@@ -46,9 +46,11 @@ class Trip(Base):
     start_time = Column(DateTime(timezone=True))
     end_time = Column(DateTime(timezone=True))
     walking_speed = Column(String(20))  # slow, moderate, fast
+    travel_mode = Column(String(20), default="walking")  # walking, transit
     
     # Optimization results
     total_time_minutes = Column(Integer)
+    route_segments = Column(JSONB)  # Store transit route segments with line info
     optimized_at = Column(DateTime(timezone=True))
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())

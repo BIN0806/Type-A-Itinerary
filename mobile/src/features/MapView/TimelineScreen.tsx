@@ -73,12 +73,18 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
     loadTrip();
   }, [tripId]);
 
-  // Override back button to go to PastTrips
+  // Override back button to go to PastTrips (reset stack to prevent duplicates)
   useLayoutEffect(() => {
     navigation.setOptions({
       headerLeft: () => (
         <TouchableOpacity
-          onPress={() => navigation.replace('PastTrips')}
+          onPress={() => navigation.reset({
+            index: 1,
+            routes: [
+              { name: 'Home' },
+              { name: 'PastTrips' },
+            ],
+          })}
           style={{ paddingHorizontal: 8 }}
         >
           <Text style={{ color: '#fff', fontSize: 16 }}>← Back</Text>
@@ -275,16 +281,28 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
             />
             <Text style={styles.transitIcon}>{getTransitIcon(step.type)}</Text>
             <View style={styles.transitStepInfo}>
-              <Text style={[
-                styles.transitLineName,
-                { color: step.line_color || '#4F46E5' }
-              ]}>
-                {step.line_name || step.type}
-              </Text>
+              <View style={styles.transitLineRow}>
+                <View style={[
+                  styles.transitLineBadge,
+                  { backgroundColor: step.line_color || '#4F46E5' }
+                ]}>
+                  <Text style={[
+                    styles.transitLineBadgeText,
+                    { color: step.text_color || '#fff' }
+                  ]}>
+                    {step.line_name || step.type}
+                  </Text>
+                </View>
+                {step.headsign && step.type !== 'WALKING' && (
+                  <Text style={styles.transitHeadsign} numberOfLines={1}>
+                    → {step.headsign}
+                  </Text>
+                )}
+              </View>
               <Text style={styles.transitStepDetail}>
                 {step.type === 'WALKING'
                   ? step.headsign
-                  : `${step.num_stops} stops • ${step.headsign}`
+                  : `${step.departure_stop} → ${step.arrival_stop} (${step.num_stops} stops)`
                 }
               </Text>
             </View>
@@ -909,6 +927,27 @@ const styles = StyleSheet.create({
     marginRight: 10,
   },
   transitStepInfo: {
+    flex: 1,
+  },
+  transitLineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  transitLineBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  transitLineBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  transitHeadsign: {
+    fontSize: 13,
+    color: '#374151',
+    fontWeight: '500',
     flex: 1,
   },
   transitLineName: {

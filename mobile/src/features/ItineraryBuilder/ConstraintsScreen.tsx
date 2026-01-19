@@ -391,7 +391,15 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
   return (
     <ScrollView style={styles.container}>
       <View style={styles.content}>
-        <Text style={styles.title}>Plan Your Route</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.title}>Plan Your Route</Text>
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.editLocationsButton}
+          >
+            <Text style={styles.editLocationsText}>Edit</Text>
+          </TouchableOpacity>
+        </View>
         <Text style={styles.subtitle}>
           Set your start point and preferences
         </Text>
@@ -700,11 +708,25 @@ const styles = StyleSheet.create({
   content: {
     padding: 20,
   },
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
   title: {
     fontSize: 28,
     fontWeight: 'bold',
     color: '#111827',
-    marginBottom: 8,
+  },
+  editLocationsButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  editLocationsText: {
+    fontSize: 16,
+    color: '#6B7280',
+    fontWeight: '500',
   },
   subtitle: {
     fontSize: 14,

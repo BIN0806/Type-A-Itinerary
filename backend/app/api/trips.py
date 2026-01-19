@@ -475,6 +475,7 @@ async def optimize_trip(
         trip.start_time = request.constraints.start_time
         trip.end_time = request.constraints.end_time
         trip.walking_speed = request.constraints.walking_speed
+        trip.travel_mode = travel_mode
         
         # Calculate total time (stay + travel)
         total_minutes = 0
@@ -522,6 +523,11 @@ async def optimize_trip(
                 }
                 route_segments.append(segment)
         
+        # Save route_segments to trip for later retrieval
+        if route_segments:
+            trip.route_segments = route_segments
+            db.commit()
+        
         # Generate Google Maps URL
         google_maps_url = maps_link_service.generate_link(optimized_waypoints)
         
@@ -532,7 +538,7 @@ async def optimize_trip(
             total_time_minutes=trip.total_time_minutes,
             travel_mode=travel_mode,
             waypoints=optimized_data,
-            route_segments=route_segments if transit_details else None,
+            route_segments=route_segments if route_segments else None,
             google_maps_url=google_maps_url
         )
         

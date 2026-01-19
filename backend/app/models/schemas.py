@@ -119,6 +119,8 @@ class TripResponse(BaseModel):
     date: Optional[datetime] = None
     status: str
     total_time_minutes: Optional[int] = None
+    travel_mode: Optional[str] = "walking"
+    route_segments: Optional[List[dict]] = None  # Transit route segments with line info
     waypoints: List[WaypointResponse] = []
     created_at: datetime
     

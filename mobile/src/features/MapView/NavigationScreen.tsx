@@ -70,12 +70,18 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
     };
   }, []);
 
-  // Override back button to go to PastTrips
+  // Override back button to go to PastTrips (reset stack to prevent duplicates)
   useLayoutEffect(() => {
     navigation.setOptions({
       headerLeft: () => (
         <TouchableOpacity
-          onPress={() => navigation.replace('PastTrips')}
+          onPress={() => navigation.reset({
+            index: 1,
+            routes: [
+              { name: 'Home' },
+              { name: 'PastTrips' },
+            ],
+          })}
           style={{ paddingHorizontal: 8 }}
         >
           <Text style={{ color: '#fff', fontSize: 16 }}>← Back</Text>
