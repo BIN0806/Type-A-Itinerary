@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -71,7 +71,21 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
 
   useEffect(() => {
     loadTrip();
-  }, []);
+  }, [tripId]);
+
+  // Override back button to go to PastTrips
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => navigation.replace('PastTrips')}
+          style={{ paddingHorizontal: 8 }}
+        >
+          <Text style={{ color: '#fff', fontSize: 16 }}>← Back</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation]);
 
   const loadTrip = async () => {
     try {
@@ -658,18 +672,30 @@ export const TimelineScreen: React.FC<TimelineScreenProps> = ({
               />
             )}
 
-            {/* Waypoint markers */}
-            {trip.waypoints.map((waypoint: any, index: number) => (
-              <Marker
-                key={`share-marker-${waypoint.id}`}
-                coordinate={{
-                  latitude: waypoint.lat,
-                  longitude: waypoint.lng,
-                }}
-                title={waypoint.name}
-                pinColor={index === 0 ? 'green' : index === trip.waypoints.length - 1 ? 'red' : '#4F46E5'}
-              />
-            ))}
+            {/* Waypoint markers - small custom circles */}
+            {trip.waypoints.map((waypoint: any, index: number) => {
+              const isStart = index === 0;
+              const isEnd = index === trip.waypoints.length - 1;
+              const color = isStart ? '#10B981' : isEnd ? '#EF4444' : '#4F46E5';
+
+              return (
+                <Marker
+                  key={`share-marker-${waypoint.id}`}
+                  coordinate={{
+                    latitude: waypoint.lat,
+                    longitude: waypoint.lng,
+                  }}
+                  title={waypoint.name}
+                  anchor={{ x: 0.5, y: 0.5 }}
+                >
+                  <View style={[styles.shareMarker, { borderColor: color }]}>
+                    <View style={[styles.shareMarkerInner, { backgroundColor: color }]}>
+                      <Text style={styles.shareMarkerText}>{waypoint.order}</Text>
+                    </View>
+                  </View>
+                </Marker>
+              );
+            })}
           </MapView>
           <View style={styles.hiddenMapLegend}>
             <View style={styles.legendItem}>
@@ -1248,6 +1274,28 @@ const styles = StyleSheet.create({
   breakTimeButtonSaveText: {
     fontSize: 15,
     fontWeight: '600',
+    color: '#fff',
+  },
+  // Small markers for share image
+  shareMarker: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  shareMarkerInner: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  shareMarkerText: {
+    fontSize: 10,
+    fontWeight: 'bold',
     color: '#fff',
   },
 });

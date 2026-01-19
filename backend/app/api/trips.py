@@ -403,6 +403,13 @@ async def optimize_trip(
     db: Session = Depends(get_db)
 ):
     """Optimize trip route using TSP solver with walking or transit."""
+    # Check ticket balance first
+    if current_user.ticket_balance < 1:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Insufficient tickets. Please purchase tickets to optimize trips."
+        )
+    
     # Get trip
     trip = db.query(Trip).filter(
         Trip.id == request.trip_id,
@@ -477,6 +484,11 @@ async def optimize_trip(
                 total_minutes += duration
         
         trip.total_time_minutes = int(total_minutes)
+        
+        # Consume one ticket - only after successful optimization
+        current_user.ticket_balance -= 1
+        logger.info(f"Consumed 1 ticket for user {current_user.id}. New balance: {current_user.ticket_balance}")
+        
         db.commit()
         
         # Build response with transit info

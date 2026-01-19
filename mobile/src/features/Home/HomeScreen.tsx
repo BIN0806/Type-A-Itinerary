@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -11,6 +11,7 @@ import {
     KeyboardAvoidingView,
 } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { apiService } from '../../services/api';
@@ -22,6 +23,22 @@ type HomeScreenProps = {
 export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [tripName, setTripName] = useState('');
+    const [ticketBalance, setTicketBalance] = useState<number | null>(null);
+
+    // Fetch ticket balance on screen focus
+    useFocusEffect(
+        useCallback(() => {
+            const fetchBalance = async () => {
+                try {
+                    const data = await apiService.getTicketBalance();
+                    setTicketBalance(data.balance);
+                } catch (error) {
+                    console.error('Failed to fetch ticket balance:', error);
+                }
+            };
+            fetchBalance();
+        }, [])
+    );
 
     const handleCreateTrips = () => {
         setTripName('');
@@ -45,7 +62,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     };
 
     const handleAddCredits = () => {
-        Alert.alert('Coming Soon', 'Add Credits feature is coming soon!');
+        navigation.navigate('AddCredits');
     };
 
     const handleSignOut = async () => {
@@ -55,6 +72,18 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
 
     return (
         <SafeAreaView style={styles.container}>
+            {/* Ticket Balance Badge - Top Right */}
+            <TouchableOpacity
+                style={styles.ticketBadge}
+                onPress={handleAddCredits}
+                activeOpacity={0.8}
+            >
+                <Text style={styles.ticketEmoji}>🎟️</Text>
+                <Text style={styles.ticketCount}>
+                    {ticketBalance !== null ? ticketBalance : '...'}
+                </Text>
+            </TouchableOpacity>
+
             <View style={styles.content}>
                 <View style={styles.headerContainer}>
                     <Text style={styles.title}>Plan_A</Text>
@@ -152,6 +181,32 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#F9FAFB',
+    },
+    ticketBadge: {
+        position: 'absolute',
+        top: Platform.OS === 'ios' ? 60 : 20,
+        right: 20,
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#fff',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 20,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+        zIndex: 100,
+        gap: 4,
+    },
+    ticketEmoji: {
+        fontSize: 18,
+    },
+    ticketCount: {
+        fontSize: 16,
+        fontWeight: 'bold',
+        color: '#4F46E5',
     },
     content: {
         flex: 1,

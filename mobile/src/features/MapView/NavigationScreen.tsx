@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import {
   View,
   Text,
@@ -69,6 +69,20 @@ export const NavigationScreen: React.FC<NavigationScreenProps> = ({
       }
     };
   }, []);
+
+  // Override back button to go to PastTrips
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerLeft: () => (
+        <TouchableOpacity
+          onPress={() => navigation.replace('PastTrips')}
+          style={{ paddingHorizontal: 8 }}
+        >
+          <Text style={{ color: '#fff', fontSize: 16 }}>← Back</Text>
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation]);
 
   const loadData = async () => {
     try {

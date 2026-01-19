@@ -4,7 +4,10 @@ from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..core.auth import get_password_hash, verify_password, create_access_token, get_current_user
 from ..db.models import User
-from ..models.schemas import UserCreate, UserLogin, Token, UserResponse
+from ..models.schemas import (
+    UserCreate, UserLogin, Token, UserResponse,
+    TicketBalanceResponse, TicketPurchaseRequest, TicketPurchaseResponse
+)
 
 router = APIRouter()
 
@@ -57,3 +60,45 @@ async def login(user_data: UserLogin, db: Session = Depends(get_db)):
 async def get_me(current_user: User = Depends(get_current_user)):
     """Get current user information."""
     return current_user
+
+
+@router.get("/auth/tickets", response_model=TicketBalanceResponse)
+async def get_ticket_balance(current_user: User = Depends(get_current_user)):
+    """Get current user's ticket balance."""
+    return TicketBalanceResponse(balance=current_user.ticket_balance)
+
+
+@router.post("/auth/tickets/purchase", response_model=TicketPurchaseResponse)
+async def purchase_tickets(
+    request: TicketPurchaseRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Purchase tickets (simulated payment for demo).
+    
+    Packages:
+    - "single": 1 ticket for $2
+    - "bundle": 3 tickets for $5
+    """
+    # Define packages
+    packages = {
+        "single": {"tickets": 1, "price_cents": 200},
+        "bundle": {"tickets": 3, "price_cents": 500}
+    }
+    
+    package_info = packages[request.package]
+    tickets_to_add = package_info["tickets"]
+    
+    # Update user's ticket balance
+    current_user.ticket_balance += tickets_to_add
+    db.commit()
+    db.refresh(current_user)
+    
+    return TicketPurchaseResponse(
+        success=True,
+        tickets_added=tickets_to_add,
+        new_balance=current_user.ticket_balance,
+        message=f"Successfully purchased {tickets_to_add} ticket(s)!"
+    )
+

@@ -13,8 +13,6 @@ import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import { RootStackParamList } from '../../navigation/AppNavigator';
 import { apiService } from '../../services/api';
-import { captureRef } from 'react-native-view-shot';
-import * as Sharing from 'expo-sharing';
 
 type MapViewScreenProps = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'MapView'>;
@@ -48,10 +46,8 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
   const [routeData, setRouteData] = useState<RouteData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState<RouteSegment | null>(null);
-  const [isSharing, setIsSharing] = useState(false);
 
-  // Refs for map and capture
-  const mapContainerRef = useRef<View>(null);
+  // Ref for MapView
   const mapViewRef = useRef<MapView>(null);
 
   useEffect(() => {
@@ -102,60 +98,6 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
     return `${(meters / 1000).toFixed(1)}km`;
   };
 
-  // Share handler - captures the map view
-  const handleShare = async () => {
-    const sharingAvailable = await Sharing.isAvailableAsync();
-    if (!sharingAvailable) {
-      Alert.alert('Error', 'Sharing is not available on this device');
-      return;
-    }
-
-    if (!trip?.waypoints?.length) {
-      Alert.alert('Error', 'No waypoints to share');
-      return;
-    }
-
-    setIsSharing(true);
-    // Dismiss any selected segment to clean up UI for screenshot
-    setSelectedSegment(null);
-
-    try {
-      // Step 1: Zoom out the map to fit all markers with padding
-      const allCoords = trip.waypoints.map((wp: any) => ({
-        latitude: wp.lat,
-        longitude: wp.lng,
-      }));
-
-      if (mapViewRef.current) {
-        mapViewRef.current.fitToCoordinates(allCoords, {
-          edgePadding: { top: 100, right: 80, bottom: 150, left: 80 },
-          animated: true,
-        });
-      }
-
-      // Step 2: Wait for animation to complete and map to render
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      // Step 3: Capture the screenshot
-      if (mapContainerRef.current) {
-        const uri = await captureRef(mapContainerRef, {
-          format: 'png',
-          quality: 1,
-        });
-
-        await Sharing.shareAsync(uri, {
-          mimeType: 'image/png',
-          dialogTitle: 'Share route map',
-        });
-      }
-    } catch (error: any) {
-      console.error('Share error:', error);
-      Alert.alert('Error', 'Could not share map');
-    } finally {
-      setIsSharing(false);
-    }
-  };
-
   if (isLoading) {
     return (
       <View style={styles.loadingContainer}>
@@ -197,7 +139,7 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
   const segmentColors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
   return (
-    <View style={styles.container} ref={mapContainerRef} collapsable={false}>
+    <View style={styles.container}>
       <MapView
         ref={mapViewRef}
         provider={PROVIDER_GOOGLE}
@@ -301,23 +243,6 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
           </View>
         )}
       </View>
-
-      {/* Share floating button */}
-      <TouchableOpacity
-        style={styles.shareButton}
-        onPress={handleShare}
-        disabled={isSharing}
-      >
-        <Text style={styles.shareButtonText}>{isSharing ? '...' : '📤'}</Text>
-      </TouchableOpacity>
-
-      {/* Sharing loading overlay */}
-      {isSharing && (
-        <View style={styles.sharingOverlay}>
-          <ActivityIndicator size="large" color="#fff" />
-          <Text style={styles.sharingText}>Preparing to share...</Text>
-        </View>
-      )}
     </View>
   );
 };
@@ -432,41 +357,6 @@ const styles = StyleSheet.create({
     color: '#C7D2FE',
     marginTop: 8,
     fontStyle: 'italic',
-  },
-  shareButton: {
-    position: 'absolute',
-    bottom: 20,
-    right: 20,
-    backgroundColor: '#8B5CF6',
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  shareButtonText: {
-    fontSize: 24,
-  },
-  sharingOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sharingText: {
-    color: '#fff',
-    fontSize: 16,
-    marginTop: 16,
-    fontWeight: '600',
   },
   // Custom small markers
   customMarker: {

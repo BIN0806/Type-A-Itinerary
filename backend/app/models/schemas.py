@@ -24,6 +24,7 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     preferences: dict = {}
+    ticket_balance: int = 1
     created_at: datetime
     
     class Config:
@@ -216,3 +217,20 @@ class MapsLinkResponse(BaseModel):
     is_split: bool = False
     part_number: Optional[int] = None
     total_parts: Optional[int] = None
+
+
+# Ticket/Credits Schemas
+class TicketBalanceResponse(BaseModel):
+    balance: int
+
+
+class TicketPurchaseRequest(BaseModel):
+    package: Literal["single", "bundle"]  # single = 1 ticket/$2, bundle = 3 tickets/$5
+
+
+class TicketPurchaseResponse(BaseModel):
+    success: bool
+    tickets_added: int
+    new_balance: int
+    message: str
+

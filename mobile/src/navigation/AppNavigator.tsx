@@ -11,6 +11,7 @@ import { LoginScreen } from '../features/Auth/LoginScreen';
 import { RegisterScreen } from '../features/Auth/RegisterScreen';
 import { HomeScreen } from '../features/Home/HomeScreen';
 import { PastTripsScreen } from '../features/PastTrips/PastTripsScreen';
+import { AddCreditsScreen } from '../features/Credits/AddCreditsScreen';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -23,6 +24,7 @@ export type RootStackParamList = {
   MapView: { tripId: string };
   Navigation: { tripId: string };
   PastTrips: undefined;
+  AddCredits: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -91,6 +93,11 @@ export const AppNavigator = () => {
           name="PastTrips"
           component={PastTripsScreen}
           options={{ title: 'Past Trips' }}
+        />
+        <Stack.Screen
+          name="AddCredits"
+          component={AddCreditsScreen}
+          options={{ title: 'Add Credits' }}
         />
       </Stack.Navigator>
     </NavigationContainer>

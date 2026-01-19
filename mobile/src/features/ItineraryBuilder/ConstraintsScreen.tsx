@@ -96,24 +96,24 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
 }) => {
   const { tripId } = route.params;
   const mapRef = useRef<MapView>(null);
-  
+
   // Start location (pin on map)
   const [startLocation, setStartLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [showMapPicker, setShowMapPicker] = useState(false);
   const [mapInitialRegion, setMapInitialRegion] = useState<MapRegion | null>(null);
   const [isLoadingWaypoints, setIsLoadingWaypoints] = useState(true);
-  
+
   // Waypoints for end selection
   const [waypoints, setWaypoints] = useState<Waypoint[]>([]);
   const [selectedStartWaypoint, setSelectedStartWaypoint] = useState<string | null>(null); // To track if user selected a waypoint as start
   const [selectedEndWaypoint, setSelectedEndWaypoint] = useState<string | null>(null);
   const [showEndPicker, setShowEndPicker] = useState(false);
   const [showStartPicker, setShowStartPicker] = useState(false); // For selecting start from waypoints
-  
+
   // Time settings
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('18:00');
-  
+
   // Ensure endTime is always after startTime
   const handleStartTimeChange = (newTime: string) => {
     setStartTime(newTime);
@@ -122,7 +122,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
     const [endH, endM] = endTime.split(':').map(Number);
     const startMinutes = startH * 60 + startM;
     const endMinutes = endH * 60 + endM;
-    
+
     if (endMinutes <= startMinutes) {
       // Set endTime to 1 hour after startTime
       const newEndMinutes = startMinutes + 60;
@@ -131,13 +131,13 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
       setEndTime(`${String(newEndH).padStart(2, '0')}:${String(newEndM).padStart(2, '0')}`);
     }
   };
-  
+
   const handleEndTimeChange = (newTime: string) => {
     const [startH, startM] = startTime.split(':').map(Number);
     const [endH, endM] = newTime.split(':').map(Number);
     const startMinutes = startH * 60 + startM;
     const endMinutes = endH * 60 + endM;
-    
+
     if (endMinutes <= startMinutes) {
       Alert.alert(
         'Invalid Time',
@@ -146,7 +146,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
       );
       return; // Don't update if invalid
     }
-    
+
     setEndTime(newTime);
   };
   const [walkingSpeed, setWalkingSpeed] = useState<'slow' | 'moderate' | 'fast'>('moderate');
@@ -169,7 +169,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
           lng: wp.lng,
         }));
         setWaypoints(wps);
-        
+
         // Map center: average of all locations. Start: nearest waypoint to that center (exactly one green waypoint pin).
         const computed = computeRegionFromWaypoints(wps);
         if (computed) {
@@ -208,7 +208,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
   const handleSelectWaypointAsStart = (wp: Waypoint) => {
     setStartLocation({ lat: wp.lat, lng: wp.lng });
     setSelectedStartWaypoint(wp.id);
-    
+
     // If the same waypoint was selected as end, clear it
     if (selectedEndWaypoint === wp.id) {
       setSelectedEndWaypoint(null);
@@ -234,6 +234,47 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
       return;
     }
 
+    // Check ticket balance first
+    try {
+      const balanceData = await apiService.getTicketBalance();
+      const balance = balanceData.balance;
+
+      if (balance < 1) {
+        // No tickets - prompt to buy
+        Alert.alert(
+          'No Tickets Available',
+          'You need at least 1 ticket to optimize a trip. Would you like to purchase tickets?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Buy Tickets',
+              onPress: () => navigation.navigate('AddCredits'),
+            },
+          ]
+        );
+        return;
+      }
+
+      // Has tickets - show confirmation
+      Alert.alert(
+        'Use 1 Ticket?',
+        `This will use 1 ticket to optimize your trip.\n\nYou have ${balance} ticket${balance !== 1 ? 's' : ''} remaining.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Use Ticket',
+            onPress: () => performOptimization(),
+          },
+        ]
+      );
+    } catch (error) {
+      console.error('Failed to check ticket balance:', error);
+      // Proceed anyway - backend will validate
+      performOptimization();
+    }
+  };
+
+  const performOptimization = async () => {
     setIsOptimizing(true);
 
     try {
@@ -275,8 +316,8 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
       const response = await apiService.optimizeTrip(tripId, constraints);
       console.log('✅ Optimization response:', response);
 
-      const endWaypointName = selectedEndWaypoint 
-        ? waypoints.find(w => w.id === selectedEndWaypoint)?.name 
+      const endWaypointName = selectedEndWaypoint
+        ? waypoints.find(w => w.id === selectedEndWaypoint)?.name
         : 'best optimal point';
 
       Alert.alert(
@@ -292,15 +333,31 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
     } catch (error: any) {
       console.error('❌ Optimization failed:', error);
       console.error('Error details:', error.response?.data);
-      
+
       let errorMessage = error.response?.data?.detail || error.message || 'Could not optimize route. Please try again.';
-      
+
+      // Handle payment required error (insufficient tickets)
+      if (error.response?.status === 402) {
+        Alert.alert(
+          'No Tickets Available',
+          'You need at least 1 ticket to optimize a trip. Would you like to purchase tickets?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Buy Tickets',
+              onPress: () => navigation.navigate('AddCredits'),
+            },
+          ]
+        );
+        return;
+      }
+
       // Handle validation errors more gracefully
       if (error.response?.status === 422) {
         const validationErrors = error.response?.data?.detail;
         if (Array.isArray(validationErrors)) {
-          const timeError = validationErrors.find((e: any) => 
-            e.msg?.includes('end_time must be after start_time') || 
+          const timeError = validationErrors.find((e: any) =>
+            e.msg?.includes('end_time must be after start_time') ||
             e.msg?.includes('start_time')
           );
           if (timeError) {
@@ -312,7 +369,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
           errorMessage = validationErrors;
         }
       }
-      
+
       Alert.alert(
         'Optimization Failed',
         errorMessage,
@@ -345,7 +402,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
           <Text style={styles.sectionSubtitle}>
             Tap a pin to select it as your starting point (green)
           </Text>
-          
+
           <View style={styles.mapContainer}>
             {mapInitialRegion ? (
               <MapView
@@ -360,7 +417,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                   const isStart = wp.id === selectedStartWaypoint;
                   const isEnd = wp.id === selectedEndWaypoint && !isStart;
                   const pinColor = isStart ? 'green' : isEnd ? 'red' : '#4F46E5';
-                  
+
                   return (
                     <Marker
                       key={wp.id}
@@ -372,8 +429,8 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                       title={wp.name}
                       description={
                         isStart ? 'START POINT - Tap another to change' :
-                        isEnd ? 'End Point' : 
-                        `Stop ${index + 1} - Tap to start here`
+                          isEnd ? 'End Point' :
+                            `Stop ${index + 1} - Tap to start here`
                       }
                       onPress={() => handleSelectWaypointAsStart(wp)}
                     />
@@ -389,7 +446,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                 )}
               </View>
             )}
-            
+
             {startLocation && (
               <View style={styles.coordinatesDisplay}>
                 <Text style={styles.coordinatesText}>
@@ -406,7 +463,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
           <Text style={styles.sectionSubtitle}>
             Choose where you want to finish your tour
           </Text>
-          
+
           <TouchableOpacity
             style={styles.endSelector}
             onPress={() => setShowEndPicker(true)}
@@ -419,7 +476,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
         {/* Time Window Section */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Time Window</Text>
-          
+
           <View style={styles.timeRow}>
             <View style={styles.timeInput}>
               <Text style={styles.timeLabel}>Start Time</Text>
@@ -430,7 +487,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                 onChangeText={setStartTime}
               />
             </View>
-            
+
             <View style={styles.timeInput}>
               <Text style={styles.timeLabel}>End Time</Text>
               <TextInput
@@ -449,7 +506,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
           <Text style={styles.sectionSubtitle}>
             Choose how you'll get around
           </Text>
-          
+
           <View style={styles.modeButtons}>
             <TouchableOpacity
               style={[
@@ -466,7 +523,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                 Walking
               </Text>
             </TouchableOpacity>
-            
+
             <TouchableOpacity
               style={[
                 styles.modeButton,
@@ -490,7 +547,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
         {travelMode === 'walking' && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Walking Speed</Text>
-            
+
             <View style={styles.speedButtons}>
               {(['slow', 'moderate', 'fast'] as const).map((speed) => (
                 <TouchableOpacity
@@ -556,7 +613,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
             <Text style={styles.modalSubtitle}>
               Choose where you want to end your tour
             </Text>
-            
+
             <ScrollView style={styles.waypointList}>
               {/* No end point option */}
               <TouchableOpacity
@@ -574,11 +631,11 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                   Let the algorithm find the optimal end point
                 </Text>
               </TouchableOpacity>
-              
+
               {/* Waypoint options - gray out if same as start */}
               {waypoints.map((wp, index) => {
                 const isStartLocation = selectedStartWaypoint === wp.id;
-                
+
                 return (
                   <TouchableOpacity
                     key={wp.id}
@@ -612,7 +669,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                       styles.waypointDescription,
                       isStartLocation && styles.waypointDescriptionDisabled
                     ]}>
-                      {isStartLocation 
+                      {isStartLocation
                         ? 'Already selected as starting point'
                         : `${wp.lat.toFixed(4)}, ${wp.lng.toFixed(4)}`
                       }
@@ -621,7 +678,7 @@ export const ConstraintsScreen: React.FC<ConstraintsScreenProps> = ({
                 );
               })}
             </ScrollView>
-            
+
             <TouchableOpacity
               style={styles.modalCloseButton}
               onPress={() => setShowEndPicker(false)}

@@ -22,6 +22,7 @@ class User(Base):
     email = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=False)
     preferences = Column(JSONB, default={})
+    ticket_balance = Column(Integer, default=1, nullable=False)  # Default: 1 free ticket
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     

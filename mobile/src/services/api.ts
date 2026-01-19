@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // If login fails with network error, run: npm run update-ip
 const API_BASE_URL = __DEV__
-  ? 'http://10.43.218.160:8000/v1'  // Auto-updated by scripts/update-ip.js
+  ? 'http://10.0.0.175:8000/v1'  // Auto-updated by scripts/update-ip.js
   : 'https://api.plana.app/v1';
 
 class ApiService {
@@ -211,6 +211,25 @@ class ApiService {
   async deleteTrip(tripId: string) {
     await this.client.delete(`/trip/${tripId}`);
   }
+
+  // Ticket/Credits APIs
+  async getTicketBalance(): Promise<{ balance: number }> {
+    const response = await this.client.get('/auth/tickets');
+    return response.data;
+  }
+
+  async purchaseTickets(packageType: 'single' | 'bundle'): Promise<{
+    success: boolean;
+    tickets_added: number;
+    new_balance: number;
+    message: string;
+  }> {
+    const response = await this.client.post('/auth/tickets/purchase', {
+      package: packageType
+    });
+    return response.data;
+  }
 }
 
 export const apiService = new ApiService();
+
