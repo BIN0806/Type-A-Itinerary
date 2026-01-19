@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // If login fails with network error, run: npm run update-ip
 const API_BASE_URL = __DEV__
-  ? 'http://10.0.0.175:8000/v1'  // Auto-updated by scripts/update-ip.js
+  ? 'http://172.20.16.39:8000/v1'  // Auto-updated by scripts/update-ip.js
   : 'https://api.plana.app/v1';
 
 class ApiService {

@@ -19,6 +19,26 @@ type MapViewScreenProps = {
   route: RouteProp<RootStackParamList, 'MapView'>;
 };
 
+interface TransitStep {
+  type: string;
+  line_name: string;
+  line_color: string;
+  text_color: string;
+  departure_stop: string;
+  arrival_stop: string;
+  num_stops: number;
+  duration_seconds: number;
+  headsign: string;
+}
+
+interface TransitRouteSegment {
+  from_order: number;
+  to_order: number;
+  travel_mode: string;
+  duration_seconds: number;
+  transit_steps?: TransitStep[];
+}
+
 interface RouteSegment {
   from_index: number;
   to_index: number;
@@ -44,8 +64,10 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
   const { tripId } = route.params;
   const [trip, setTrip] = useState<any>(null);
   const [routeData, setRouteData] = useState<RouteData | null>(null);
+  const [transitSegments, setTransitSegments] = useState<TransitRouteSegment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedSegment, setSelectedSegment] = useState<RouteSegment | null>(null);
+  const [selectedTransitSegment, setSelectedTransitSegment] = useState<TransitRouteSegment | null>(null);
 
   // Ref for MapView
   const mapViewRef = useRef<MapView>(null);
@@ -58,6 +80,11 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
     try {
       const tripResponse = await apiService.getTrip(tripId);
       setTrip(tripResponse);
+
+      // Load transit route segments if available
+      if (tripResponse.route_segments) {
+        setTransitSegments(tripResponse.route_segments);
+      }
 
       // Try to get route data
       try {
@@ -138,6 +165,31 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
   // Generate route polyline colors for each segment
   const segmentColors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
 
+  // Get color for a segment - use transit line color if available, otherwise default walking purple
+  const getSegmentColor = (segmentIndex: number): string => {
+    // Check if we have transit info for this segment
+    const transitSeg = transitSegments.find(
+      ts => ts.from_order === segmentIndex + 1 && ts.transit_steps && ts.transit_steps.length > 0
+    );
+
+    if (transitSeg && transitSeg.transit_steps && transitSeg.transit_steps[0]) {
+      // Use the first transit step's line color
+      const lineColor = transitSeg.transit_steps[0].line_color;
+      // Avoid white/black colors
+      if (lineColor && lineColor !== '#FFFFFF' && lineColor !== '#000000' && lineColor !== '#ffffff') {
+        return lineColor;
+      }
+    }
+
+    // Default to walking purple
+    return '#4F46E5';
+  };
+
+  // Get transit info for a segment
+  const getTransitInfoForSegment = (segmentIndex: number): TransitRouteSegment | null => {
+    return transitSegments.find(ts => ts.from_order === segmentIndex + 1) || null;
+  };
+
   return (
     <View style={styles.container}>
       <MapView
@@ -146,20 +198,28 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
         style={styles.map}
         initialRegion={region}
       >
-        {/* Render actual walking paths if available */}
-        {routeData && routeData.segments.map((segment, index) => (
-          <Polyline
-            key={`route-${index}`}
-            coordinates={segment.polyline.map(point => ({
-              latitude: point.lat,
-              longitude: point.lng,
-            }))}
-            strokeColor={segmentColors[index % segmentColors.length]}
-            strokeWidth={4}
-            tappable
-            onPress={() => setSelectedSegment(segment)}
-          />
-        ))}
+        {/* Render actual walking/transit paths if available */}
+        {routeData && routeData.segments.map((segment, index) => {
+          const transitInfo = getTransitInfoForSegment(index);
+          const color = getSegmentColor(index);
+
+          return (
+            <Polyline
+              key={`route-${index}`}
+              coordinates={segment.polyline.map(point => ({
+                latitude: point.lat,
+                longitude: point.lng,
+              }))}
+              strokeColor={color}
+              strokeWidth={transitInfo?.transit_steps?.length ? 5 : 4}
+              tappable
+              onPress={() => {
+                setSelectedSegment(segment);
+                setSelectedTransitSegment(transitInfo);
+              }}
+            />
+          );
+        })}
 
         {/* Fallback to straight lines if no route data */}
         {!routeData && (
@@ -200,7 +260,9 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
       {/* Route info header */}
       {routeData && (
         <View style={styles.routeInfo}>
-          <Text style={styles.routeInfoTitle}>Walking Route</Text>
+          <Text style={styles.routeInfoTitle}>
+            {trip?.travel_mode === 'transit' ? '🚇 Transit Route' : '🚶 Walking Route'}
+          </Text>
           <Text style={styles.routeInfoText}>
             {formatDuration(routeData.total_duration_seconds)} • {formatDistance(routeData.total_distance_meters)}
           </Text>
@@ -211,14 +273,49 @@ export const MapViewScreen: React.FC<MapViewScreenProps> = ({
       {selectedSegment && (
         <TouchableOpacity
           style={styles.segmentInfo}
-          onPress={() => setSelectedSegment(null)}
+          onPress={() => {
+            setSelectedSegment(null);
+            setSelectedTransitSegment(null);
+          }}
         >
           <Text style={styles.segmentInfoTitle}>
             {selectedSegment.from_name} → {selectedSegment.to_name}
           </Text>
-          <Text style={styles.segmentInfoText}>
-            🚶 {selectedSegment.duration_text || formatDuration(selectedSegment.duration_seconds)} • {selectedSegment.distance_text || formatDistance(selectedSegment.distance_meters)}
-          </Text>
+
+          {/* Show transit details if available */}
+          {selectedTransitSegment?.transit_steps && selectedTransitSegment.transit_steps.length > 0 ? (
+            <View style={styles.transitInfoContainer}>
+              {selectedTransitSegment.transit_steps.map((step, idx) => (
+                <View key={idx} style={styles.transitInfoRow}>
+                  <View style={[
+                    styles.transitLineBadge,
+                    { backgroundColor: step.line_color || '#4F46E5' }
+                  ]}>
+                    <Text style={[
+                      styles.transitLineBadgeText,
+                      { color: step.text_color || '#fff' }
+                    ]}>
+                      {step.line_name}
+                    </Text>
+                  </View>
+                  <Text style={styles.transitInfoText} numberOfLines={1}>
+                    → {step.headsign}
+                  </Text>
+                  <Text style={styles.transitInfoDuration}>
+                    {Math.round(step.duration_seconds / 60)} min
+                  </Text>
+                </View>
+              ))}
+              <Text style={styles.transitStopsInfo}>
+                {selectedTransitSegment.transit_steps[0].departure_stop} → {selectedTransitSegment.transit_steps[0].arrival_stop}
+              </Text>
+            </View>
+          ) : (
+            <Text style={styles.segmentInfoText}>
+              🚶 {selectedSegment.duration_text || formatDuration(selectedSegment.duration_seconds)} • {selectedSegment.distance_text || formatDistance(selectedSegment.distance_meters)}
+            </Text>
+          )}
+
           <Text style={styles.tapToDismiss}>Tap to dismiss</Text>
         </TouchableOpacity>
       )}
@@ -379,5 +476,39 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: 'bold',
     color: '#fff',
+  },
+  // Transit info styles
+  transitInfoContainer: {
+    marginTop: 8,
+  },
+  transitInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+    gap: 8,
+  },
+  transitLineBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  transitLineBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  transitInfoText: {
+    fontSize: 13,
+    color: '#E0E7FF',
+    flex: 1,
+  },
+  transitInfoDuration: {
+    fontSize: 13,
+    color: '#E0E7FF',
+    fontWeight: '600',
+  },
+  transitStopsInfo: {
+    fontSize: 12,
+    color: '#C7D2FE',
+    marginTop: 4,
   },
 });
